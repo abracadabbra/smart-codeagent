@@ -103,5 +103,6 @@ interface SendMessageArgs {
  * 必须在 appendUserMessage 之后调用，因为需要把 assistant msgId 传给后端。
  */
 export async function sendMessage({ text, assistantId }: SendMessageArgs) {
-  await invoke("send_message", { args: { text, assistantId } });
+  // Tauri 2: invoke payload 是扁平对象，key 直接对应 Rust 命令参数名（camelCase）
+  await invoke("send_message", { text, assistantId });
 }

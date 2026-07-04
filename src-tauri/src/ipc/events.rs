@@ -6,23 +6,27 @@ use tauri::{AppHandle, Emitter};
 use crate::agent::AgentState;
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentTokenPayload {
     pub msg_id: String,
     pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentStatusPayload {
     pub state: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentErrorPayload {
     pub msg_id: String,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentDonePayload {
     pub msg_id: String,
 }

@@ -1,7 +1,12 @@
 //! LLM Provider 抽象 + 实现。
 //!
-//! Phase 1 只提供 Anthropic 一个 Provider；OpenAI / DeepSeek / Gemini
-//! 留到 Phase 2 走 OpenAICompatible 分支。
+//! 当前实现走 Anthropic Messages API 兼容协议（`AnthropicClient`），默认指向
+//! SenseNova (`https://token.sensenova.cn`) + `deepseek-v4-flash`。
+//! 协议层完全兼容（Body + SSE 事件序列），仅鉴权头从 `x-api-key` 换成
+//! `Authorization: Bearer`（见 `anthropic.rs`）。
+//!
+//! 真正的 OpenAI 兼容 / Gemini / 自定义 Provider 留到 Phase 2 走
+//! `OpenAICompatible` 分支。
 
 pub mod anthropic;
 

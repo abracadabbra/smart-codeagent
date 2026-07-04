@@ -47,6 +47,8 @@ struct SseDelta {
     delta_type: Option<String>,
     #[serde(default)]
     text: Option<String>,
+    #[serde(default)]
+    thinking: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,11 +63,13 @@ impl Provider for AnthropicClient {
         // 1. HTTP 请求
         let url = format!("{}/v1/messages", self.cfg.base_url);
 
+        // SenseNova /v1/messages 与 Anthropic Messages API 协议兼容：
+        // 鉴权用 Authorization: Bearer（与 OpenAI 兼容接口共用 Key）；
+        // anthropic-version 头 SenseNova 也接受但非必需，省略以减少噪音。
         let response = self
             .http
             .post(&url)
-            .header("x-api-key", &self.cfg.api_key)
-            .header("anthropic-version", "2023-06-01")
+            .header("Authorization", format!("Bearer {}", self.cfg.api_key))
             .header("content-type", "application/json")
             .header("accept", "text/event-stream")
             .json(&serde_json::json!({
@@ -157,9 +161,15 @@ fn parse_event(event_text: &str) -> ParsedEvent {
             }
             if ev.event_type == "content_block_delta" {
                 if let Some(delta) = ev.delta {
+                    // 优先取正文的 text_delta；thinking_delta 在 Rust 层吞掉，
+                    // 不 forward 给前端（避免 1M 上下文模型把思考过程灌爆 UI）。
+                    // Phase 1 后续要做工具系统时再单独开个 agent:thinking 事件。
                     if let Some(text) = delta.text {
-                        return ParsedEvent::Delta(text);
+                        if !text.is_empty() {
+                            return ParsedEvent::Delta(text);
+                        }
                     }
+                    // delta_type == "thinking_delta" 或两者皆空 → 丢
                 }
             }
             ParsedEvent::Skip

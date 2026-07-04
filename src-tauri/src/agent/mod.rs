@@ -28,6 +28,7 @@ impl AgentState {
 
 /// 多轮对话中的单条消息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Message {
     pub role: String,
     pub content: String,

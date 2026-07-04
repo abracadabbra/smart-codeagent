@@ -40,5 +40,10 @@ src-tauri/target/
 .trellis/.runtime/
 .trellis/.developer
 
+# OMC runtime (per-session state, scan timestamps, hot-paths cache)
+.omc/state/
+.omc/project-memory.json
+.omc/notepad.md
+
 # OS
 Thumbs.db
