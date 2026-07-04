@@ -1,0 +1,5 @@
+{
+  "provider_key": "claude",
+  "model_id": "claude-opus-4-7",
+  "reasoning_effort": "high"
+}
