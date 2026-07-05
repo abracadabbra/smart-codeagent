@@ -1,9 +1,11 @@
 import { ChatView } from "@/components/chat/ChatView";
 import { AgentEventBridge } from "@/components/AgentEventBridge";
+import { PreviewPane } from "@/components/PreviewPane";
+import { ApprovalDialog } from "@/components/chat/ApprovalDialog";
 
 /**
- * 三栏布局（左 Session 占位 / 中 对话 / 右 文件预览占位） + 顶部标题栏。
- * Tauri 桌面窗口不需要传统浏览器 chrome，由 titleBarStyle 控制（见 tauri.conf.json）。
+ * 三栏布局（左 Session 占位 / 中 对话 / 右 工具预览） + 顶部标题栏。
+ * ApprovalDialog 由 store 中的 approvalRequest 触发，挂在 body 顶层 modal。
  */
 export function App() {
   return (
@@ -31,14 +33,12 @@ export function App() {
           <ChatView />
         </section>
 
-        {/* 右侧文件预览 / 工具结果占位 */}
-        <aside className="w-80 shrink-0 border-l border-ink-700 bg-ink-800/30 p-3 text-xs text-ink-300">
-          <div className="font-medium text-ink-200 mb-2">Preview</div>
-          <div className="rounded-md border border-dashed border-ink-600 p-3 text-center">
-            占位 — Phase 2 添加文件预览 / 工具结果
-          </div>
-        </aside>
+        {/* 右侧 工具调用预览 */}
+        <PreviewPane />
       </main>
+
+      {/* 全局 modal：approval_request 触发时显示 */}
+      <ApprovalDialog />
     </div>
   );
 }

@@ -11,8 +11,10 @@
 pub mod anthropic;
 
 use crate::agent::Message;
+use crate::agent::tools::ChatToolDefinition;
 use crate::config::AnthropicConfig;
 use futures::Stream;
+use serde::Serialize;
 use std::pin::Pin;
 use thiserror::Error;
 
@@ -33,17 +35,39 @@ pub enum ProviderError {
 
 pub type ProviderResult<T> = Result<T, ProviderError>;
 
-/// Anthropic Messages API 请求体（仅 Phase 1 需要的字段）。
+/// Anthropic Messages API 请求体（Phase 2 加 `tools` 字段）。
+#[derive(Debug, Clone, Serialize)]
 pub struct MessagesRequest {
     pub model: String,
     pub max_tokens: u32,
     pub messages: Vec<Message>,
     pub system: Option<String>,
     pub stream: bool,
+    /// Phase 2 新增：可用工具定义（Anthropic `tools` 字段）
+    #[serde(default)]
+    pub tools: Vec<ChatToolDefinition>,
 }
 
-/// 流式响应：每 item 是一个增量文本片段。
-pub type TokenStream = Pin<Box<dyn Stream<Item = ProviderResult<String>> + Send>>;
+/// 流式响应：每 item 是一个 `StreamChunk`（Phase 2 起改为区分 text / tool_use）。
+///
+/// Phase 1 的 `TokenStream = Pin<Box<Stream<Item = Result<String>>>>` 被
+/// `StreamChunk::Text` 取代；tool_use 通过 `StreamChunk::ToolUseStart` /
+/// `StreamChunk::ToolUseInputDelta` / `StreamChunk::ToolUseEnd` 三段式累积。
+pub type TokenStream = Pin<Box<dyn Stream<Item = ProviderResult<StreamChunk>> + Send>>;
+
+#[derive(Debug, Clone)]
+pub enum StreamChunk {
+    /// 普通文本增量
+    Text(String),
+    /// tool_use 开始（携带 id + name）
+    ToolUseStart { id: String, name: String },
+    /// tool_use 参数增量（input_json_delta 累积）
+    ToolUseInputDelta(String),
+    /// tool_use 结束
+    ToolUseEnd,
+    /// 流结束信号（含 stop_reason）
+    Done { stop_reason: Option<String> },
+}
 
 /// Provider 抽象（Phase 1 仅 Anthropic 实现，未来可扩展）。
 ///
@@ -54,7 +78,7 @@ pub trait Provider: Send + Sync {
     async fn stream_chat(&self, req: MessagesRequest) -> ProviderResult<TokenStream>;
 }
 
-/// 构造默认 provider：Phase 1 = Anthropic。
+/// 构造默认 provider：Phase 2 = Anthropic（SenseNova 兼容）。
 pub fn default_provider(config: AnthropicConfig) -> Box<dyn Provider> {
     Box::new(anthropic::AnthropicClient::new(config))
 }

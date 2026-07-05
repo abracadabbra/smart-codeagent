@@ -1,4 +1,19 @@
-export type AgentState = "Idle" | "Prepare" | "Stream" | "Stop";
+export type AgentState =
+  | "Idle"
+  | "Prepare"
+  | "Stream"
+  | "Stop"
+  | "ToolLoop"
+  | "Synthesis"
+  | "Plain";
 
 // Kept in sync with src-tauri/src/agent/mod.rs AgentState enum
-export const AGENT_STATES: AgentState[] = ["Idle", "Prepare", "Stream", "Stop"];
+export const AGENT_STATES: AgentState[] = [
+  "Idle",
+  "Prepare",
+  "Stream",
+  "Stop",
+  "ToolLoop",
+  "Synthesis",
+  "Plain",
+];

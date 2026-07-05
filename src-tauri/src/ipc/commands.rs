@@ -1,12 +1,18 @@
 //! Tauri Command handler。
+//!
+//! Phase 2: send_message 接受 run_id + generation（前端唯一生成，避免后端重复）；
+//! 新增 approve_tool / answer_ask_user 两个 command。
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use serde::Deserialize;
+use tauri::{AppHandle, Manager, State};
 
+use crate::agent::host_impl::TauriHost;
 use crate::agent::loop_::AgentLoop;
+use crate::agent::tools::AskUserResponseResult;
 
-/// Phase 1 唯一 command：用户发消息，启动一轮 Agent Loop。
+/// Phase 1 兼容 + Phase 2：用户发消息，启动一轮 Agent Loop。
 /// 立即返回（不阻塞 IPC），实际执行由 tokio::spawn 后台进行。
 #[tauri::command]
 pub async fn send_message(
@@ -14,17 +20,72 @@ pub async fn send_message(
     agent: State<'_, Arc<AgentLoop>>,
     text: String,
     assistant_id: String,
+    run_id: String,
+    generation: u64,
 ) -> Result<(), String> {
     tracing::info!(
-        "send_message invoked: text={:?}, assistantId={:?}",
+        "send_message invoked: text={:?}, assistantId={:?}, run_id={:?}",
         text,
-        assistant_id
+        assistant_id,
+        run_id
     );
 
     let agent: Arc<AgentLoop> = (*agent).clone();
-    // 第一次进入时把 AppHandle 灌进 Loop；后续 emit 才有窗口。
     agent.attach_app(app).await;
-    agent.spawn_run(text, assistant_id);
+    agent.spawn_run(text, assistant_id, run_id, generation);
 
+    Ok(())
+}
+
+/// 用户对 approval_request 的响应。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApproveToolArgs {
+    pub approval_id: String,
+    pub allow: bool,
+}
+
+#[tauri::command]
+pub async fn approve_tool(
+    app: AppHandle,
+    args: ApproveToolArgs,
+) -> Result<(), String> {
+    let host = app
+        .try_state::<Arc<TauriHost>>()
+        .ok_or_else(|| "TauriHost not managed".to_string())?;
+    host.resolve_approval(&args.approval_id, args.allow);
+    Ok(())
+}
+
+/// 用户对 ask_user prompt 的回答。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnswerAskUserArgs {
+    pub ask_user_id: String,
+    pub response: AskUserResponseResult,
+}
+
+#[tauri::command]
+pub async fn answer_ask_user(
+    app: AppHandle,
+    args: AnswerAskUserArgs,
+) -> Result<(), String> {
+    let host = app
+        .try_state::<Arc<TauriHost>>()
+        .ok_or_else(|| "TauriHost not managed".to_string())?;
+    host.resolve_ask_user(&args.ask_user_id, args.response);
+    Ok(())
+}
+
+/// 用户取消当前 generation。
+#[tauri::command]
+pub async fn cancel_run(
+    app: AppHandle,
+    run_id: String,
+) -> Result<(), String> {
+    let host = app
+        .try_state::<Arc<TauriHost>>()
+        .ok_or_else(|| "TauriHost not managed".to_string())?;
+    host.cancel_generation(&run_id);
     Ok(())
 }

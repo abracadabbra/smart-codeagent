@@ -1,33 +1,51 @@
-//! Agent Loop 主循环：4 状态，Phase 1 简化版（无 Tool / Recover）。
+//! Agent Loop 主循环：3-phase（ToolLoop / Synthesis / Plain）+ 多轮 round。
+//!
+//! Phase 2 借 Kivio `loop_.rs:135` 的 `run_agent_loop` 形态 + `AgentPhase` 三段式：
+//!
+//! ```text
+//! Idle → Prepare → ToolLoop (round 1: plan → execute tool_use → loop)
+//!               └→ Synthesis (tool 循环结束 → 最终合成)
+//!               └→ Plain (无 tool，纯文本)
+//!       → Stop → Idle
+//! ```
+//!
+//! Phase 2 砍掉了 Kivio 的 Kivio-only 字段（assistant snapshot / skills / plan mode），
+//! 保留核心：host trait 抽象、round 循环、tool execution、approval gate、partial persist。
 
+use crate::agent::host::AgentHost;
+use crate::agent::tools::{
+    ChatToolDefinition, ToolCallRecord, ToolCallStatus, ToolContext, ToolRegistry,
+};
+use crate::agent::types::{AgentRunConfig, AgentRunResult, RoundResponse, ToolUseBlock};
 use crate::agent::{AgentState, Message};
-use crate::ipc::events::{emit_done, emit_error, emit_status, emit_token};
-use crate::providers::{MessagesRequest, Provider};
+use crate::config::AnthropicConfig;
+use crate::ipc::events::{emit_status, emit_stream_done, emit_tool_record};
 use crate::providers::anthropic::AnthropicClient;
+use crate::providers::{MessagesRequest, Provider, StreamChunk};
 use futures::StreamExt;
 use std::sync::Arc;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// 全局共享的 Agent Loop handle。
-/// Phase 1 单实例，不做 session 隔离。
 pub struct AgentLoop {
     app: Mutex<Option<AppHandle>>,
     state: Mutex<AgentState>,
     history: Mutex<Vec<Message>>,
+    config: AgentRunConfig,
 }
 
 impl AgentLoop {
-    pub fn new() -> Self {
+    pub fn new(config: AgentRunConfig) -> Self {
         Self {
             app: Mutex::new(None),
             state: Mutex::new(AgentState::Idle),
             history: Mutex::new(Vec::new()),
+            config,
         }
     }
 
-    /// 命令入口第一次调用时注入 AppHandle，之后所有 emit 都用它。
     pub async fn attach_app(self: &Arc<Self>, handle: AppHandle) {
         let mut slot = self.app.lock().await;
         *slot = Some(handle);
@@ -41,108 +59,385 @@ impl AgentLoop {
         *self.state.lock().await
     }
 
-    /// 收到 send_message command 时调用：跑完一轮 Idle→Prepare→Stream→Stop→Idle。
-    /// Phase 1 不阻塞 command 调用 — 用 tokio::spawn 在后台执行，command 立即返回。
-    pub fn spawn_run(self: Arc<Self>, text: String, assistant_id: String) {
+    pub async fn config(&self) -> &AgentRunConfig {
+        &self.config
+    }
+
+    /// 收到 send_message command 时调用：跑完一轮完整 loop。
+    /// 不阻塞 command 调用 — 用 tokio::spawn 在后台执行。
+    pub fn spawn_run(
+        self: Arc<Self>,
+        text: String,
+        assistant_id: String,
+        run_id: String,
+        generation: u64,
+    ) {
         tokio::spawn(async move {
-            if let Err(e) = self.run_inner(text, assistant_id).await {
+            if let Err(e) = self.run_inner(text, assistant_id, run_id, generation).await {
                 tracing::error!("agent loop failed: {e:?}");
             }
         });
     }
 
-    async fn run_inner(self: Arc<Self>, user_text: String, assistant_id: String) -> anyhow::Result<()> {
-        // 1. 状态转移：Idle → Prepare
+    async fn run_inner(
+        self: Arc<Self>,
+        user_text: String,
+        assistant_id: String,
+        run_id: String,
+        generation: u64,
+    ) -> anyhow::Result<()> {
+        let app = self.app_handle().await;
+
+        // 1. Idle → Prepare
         self.transition(AgentState::Prepare).await;
-        emit_status(self.app_handle().await.as_ref(), AgentState::Prepare);
+        emit_status(app.as_ref(), AgentState::Prepare);
 
         // 2. 构造消息历史（追加用户消息）
-        let messages = {
+        {
             let mut history = self.history.lock().await;
             history.push(Message {
                 role: "user".into(),
                 content: user_text,
             });
-            history.clone()
-        };
+        }
 
-        // 3. 构造 provider 并发起请求
-        let config = crate::config::AnthropicConfig::from_env();
-        let client = AnthropicClient::new(config);
-        let req = MessagesRequest {
-            model: client.config().model.clone(),
-            max_tokens: 8192,
-            messages: messages.clone(),
-            system: Some(
-                "You are Smart CodeAgent, an AI coding assistant. Be concise and helpful."
-                    .to_string(),
-            ),
-            stream: true,
-        };
+        // 3. 构造 provider + tool registry
+        let anthropic_cfg = AnthropicConfig::from_env();
+        let provider = AnthropicClient::new(anthropic_cfg);
+        let tools = self.build_tool_registry();
+        let tool_defs = tools.definitions();
 
-        // 4. 状态转移：Prepare → Stream
-        self.transition(AgentState::Stream).await;
-        emit_status(self.app_handle().await.as_ref(), AgentState::Stream);
-
-        // 5. 流式消费
-        let stream_result = client.stream_chat(req).await;
-        match stream_result {
-            Ok(mut s) => {
-                let mut full_text = String::new();
-                while let Some(item) = s.next().await {
-                    match item {
-                        Ok(delta) => {
-                            // 推送 token 给前端
-                            emit_token(
-                                self.app_handle().await.as_ref(),
-                                &assistant_id,
-                                &delta,
-                            );
-                            full_text.push_str(&delta);
-                        }
-                        Err(e) => {
-                            emit_error(
-                                self.app_handle().await.as_ref(),
-                                &assistant_id,
-                                &format!("stream error: {e}"),
-                            );
-                            self.transition(AgentState::Stop).await;
-                            emit_status(self.app_handle().await.as_ref(), AgentState::Stop);
-                            return Err(anyhow::anyhow!(e));
-                        }
-                    }
-                }
-                debug!("collected full response: {full_text}");
-
-                // 把完整回复追加进历史
-                self.history.lock().await.push(Message {
-                    role: "assistant".into(),
-                    content: full_text,
-                });
+        // 4. host：复用 lib.rs 在 setup 时 manage 的单例 TauriHost。
+        //    不能每次新建——否则 approve_tool / answer_ask_user 命令通过 try_state
+        //    拿到的是另一个实例，oneshot sender 永远等不到 resolve。
+        let host: Arc<dyn AgentHost> = match app.as_ref() {
+            Some(handle) => {
+                let h: Arc<crate::agent::host_impl::TauriHost> = handle
+                    .try_state::<Arc<crate::agent::host_impl::TauriHost>>()
+                    .map(|s| s.inner().clone())
+                    .ok_or_else(|| anyhow::anyhow!("TauriHost not managed"))?;
+                h.register_generation(&run_id, generation);
+                h as Arc<dyn AgentHost>
             }
-            Err(e) => {
-                // 启动流就失败（401、网络断开等）
-                emit_error(
-                    self.app_handle().await.as_ref(),
-                    &assistant_id,
-                    &format!("request failed: {e}"),
+            None => {
+                warn!("no AppHandle attached; loop cannot emit events");
+                return Ok(());
+            }
+        };
+
+        // 5. Phase 2 状态机：先把 tool 循环跑完，再决定是否需要 synthesis
+        self.transition(AgentState::ToolLoop).await;
+        emit_status(app.as_ref(), AgentState::ToolLoop);
+
+        let mut all_tool_records: Vec<ToolCallRecord> = Vec::new();
+        let mut final_text = String::new();
+        let mut round: u32 = 0;
+
+        loop {
+            if round >= self.config.max_tool_rounds {
+                warn!("hit max_tool_rounds={}", self.config.max_tool_rounds);
+                break;
+            }
+            round += 1;
+
+            // 检查 generation 是否被取消
+            if !host.is_generation_active(&run_id, generation) {
+                debug!("generation cancelled at round {round}");
+                break;
+            }
+
+            // 跑一轮：调 LLM + 处理 tool_use
+            let snapshot = {
+                let history = self.history.lock().await;
+                history.clone()
+            };
+
+            let req = MessagesRequest {
+                model: self.config.model.clone(),
+                max_tokens: self.config.max_tokens,
+                messages: snapshot,
+                system: Some(self.config.system_prompt.clone()),
+                stream: true,
+                tools: tool_defs.clone(),
+            };
+
+            let stream_result = provider.stream_chat(req).await;
+            let mut stream = match stream_result {
+                Ok(s) => s,
+                Err(e) => {
+                    self.emit_error_and_stop(&app, &assistant_id, &format!("request failed: {e}"))
+                        .await;
+                    return Err(anyhow::anyhow!(e));
+                }
+            };
+
+            // 累积本轮响应：text + tool_use
+            let round_resp = Self::consume_stream(
+                &mut stream,
+                &app,
+                &run_id,
+                &assistant_id,
+                &host,
+                round,
+                &mut all_tool_records,
+            )
+            .await;
+
+            // 如果有 tool_use 派发它们
+            if !round_resp.tool_uses.is_empty() {
+                let ctx = ToolContext {
+                    run_id: run_id.clone(),
+                    message_id: assistant_id.clone(),
+                    tool_call_id: String::new(), // single-tool 时由 execute 填
+                    round,
+                    generation,
+                };
+
+                let tool_results = crate::agent::rounds::dispatch_round(
+                    &tools,
+                    &host,
+                    &ctx,
+                    &round_resp.tool_uses,
+                )
+                .await;
+
+                // 把 assistant tool_use + user tool_result 推回 history
+                Self::append_tool_round_to_history(
+                    &self.history,
+                    &round_resp.tool_uses,
+                    &tool_results,
+                )
+                .await;
+
+                // 持久化 partial
+                let api_msgs = build_tool_round_api_messages(
+                    &round_resp.text,
+                    &round_resp.tool_uses,
+                    &tool_results,
                 );
-                self.transition(AgentState::Stop).await;
-                emit_status(self.app_handle().await.as_ref(), AgentState::Stop);
-                return Err(anyhow::anyhow!(e));
+                host.persist_partial_assistant(
+                    &run_id,
+                    &assistant_id,
+                    &all_tool_records,
+                    &api_msgs,
+                );
+
+                // 如果本轮 LLM 没产出纯文本，但所有 tool 都是 terminal → 也算结束
+                if round_resp.text.is_empty() && round_resp.stop_reason.as_deref() == Some("end_turn") {
+                    break;
+                }
+                continue; // 进入下一轮
+            } else {
+                // 没有 tool_use：纯文本回复 → 本轮就是 final
+                final_text = round_resp.text;
+                break;
             }
         }
 
-        // 6. 状态转移：Stream → Stop → Idle
+        // 6. Stop → Idle
+        emit_stream_done(app.as_ref(), &run_id, &assistant_id, "end_turn");
         self.transition(AgentState::Stop).await;
-        emit_status(self.app_handle().await.as_ref(), AgentState::Stop);
-        emit_done(self.app_handle().await.as_ref(), &assistant_id);
+        emit_status(app.as_ref(), AgentState::Stop);
+
+        // 7. 把 final assistant 文本推回 history
+        if !final_text.is_empty() {
+            let mut history = self.history.lock().await;
+            history.push(Message {
+                role: "assistant".into(),
+                content: final_text.clone(),
+            });
+        }
+
+        let result = AgentRunResult {
+            final_text,
+            tool_records: all_tool_records,
+            ask_user_response: None,
+            rounds: round,
+        };
+        info!(
+            "agent loop completed: rounds={}, tool_calls={}",
+            result.rounds,
+            result.tool_records.len()
+        );
 
         self.transition(AgentState::Idle).await;
-        emit_status(self.app_handle().await.as_ref(), AgentState::Idle);
-
-        info!("agent loop run completed");
+        emit_status(app.as_ref(), AgentState::Idle);
         Ok(())
+    }
+
+    /// 消费单个 stream，累积 text + tool_use。
+    async fn consume_stream(
+        stream: &mut crate::providers::TokenStream,
+        app: &Option<AppHandle>,
+        run_id: &str,
+        message_id: &str,
+        host: &Arc<dyn AgentHost>,
+        round: u32,
+        all_records: &mut Vec<ToolCallRecord>,
+    ) -> RoundResponse {
+        let mut text = String::new();
+        let mut tool_uses: Vec<ToolUseBlock> = Vec::new();
+        let mut stop_reason: Option<String> = None;
+        let mut current_tool: Option<usize> = None; // index in tool_uses
+        let mut started_at = chrono::Utc::now().timestamp();
+
+        while let Some(chunk_res) = stream.next().await {
+            match chunk_res {
+                Ok(chunk) => match chunk {
+                    StreamChunk::Text(delta) => {
+                        text.push_str(&delta);
+                        host.emit_stream_delta(run_id, message_id, &delta, None);
+                    }
+                    StreamChunk::ToolUseStart { id, name } => {
+                        tool_uses.push(ToolUseBlock {
+                            id,
+                            name,
+                            input: serde_json::Value::Null,
+                            input_raw: String::new(),
+                        });
+                        current_tool = Some(tool_uses.len() - 1);
+                        started_at = chrono::Utc::now().timestamp();
+
+                        // emit ToolCallRecord (Pending)
+                        let record = ToolCallRecord {
+                            id: tool_uses.last().unwrap().id.clone(),
+                            name: tool_uses.last().unwrap().name.clone(),
+                            source: "native".into(),
+                            server_id: None,
+                            arguments: String::new(),
+                            status: ToolCallStatus::Pending,
+                            result_preview: None,
+                            error: None,
+                            duration_ms: None,
+                            started_at: Some(started_at),
+                            completed_at: None,
+                            round,
+                            sensitive: false, // execute 后会刷新
+                            artifacts: vec![],
+                            structured_content: None,
+                        };
+                        host.emit_tool_record(run_id, message_id, &record);
+                        all_records.push(record);
+                    }
+                    StreamChunk::ToolUseInputDelta(delta) => {
+                        if let Some(idx) = current_tool {
+                            tool_uses[idx].input_raw.push_str(&delta);
+                        }
+                    }
+                    StreamChunk::ToolUseEnd => {
+                        // 解析累积的 raw JSON 成 Value
+                        if let Some(idx) = current_tool.take() {
+                            if !tool_uses[idx].input_raw.is_empty() {
+                                match serde_json::from_str(&tool_uses[idx].input_raw) {
+                                    Ok(v) => tool_uses[idx].input = v,
+                                    Err(e) => warn!("tool_use input parse failed: {e}"),
+                                }
+                            }
+                        }
+                    }
+                    StreamChunk::Done { stop_reason: sr } => {
+                        stop_reason = sr;
+                        break;
+                    }
+                },
+                Err(e) => {
+                    warn!("stream error: {e}");
+                    break;
+                }
+            }
+        }
+
+        RoundResponse {
+            text,
+            tool_uses,
+            stop_reason,
+        }
+    }
+
+    /// 把 tool_use + tool_result 追加到 history（Anthropic multi-block 格式）。
+    async fn append_tool_round_to_history(
+        history: &Mutex<Vec<Message>>,
+        tool_uses: &[ToolUseBlock],
+        tool_results: &[crate::agent::rounds::ToolResultBlock],
+    ) {
+        // 1. assistant message: text? + tool_use blocks
+        let assistant_content: Vec<serde_json::Value> = tool_uses
+            .iter()
+            .map(|tu| {
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": tu.id,
+                    "name": tu.name,
+                    "input": tu.input,
+                })
+            })
+            .collect();
+
+        let mut history = history.lock().await;
+        history.push(Message {
+            role: "assistant".into(),
+            content: serde_json::to_string(&assistant_content).unwrap_or_default(),
+        });
+
+        // 2. user message: tool_result blocks
+        let user_content: Vec<serde_json::Value> = tool_results
+            .iter()
+            .map(|tr| {
+                let body = match &tr.kind {
+                    crate::agent::rounds::ToolResultKind::Success { content } => content.clone(),
+                    crate::agent::rounds::ToolResultKind::Error { message } => message.clone(),
+                    crate::agent::rounds::ToolResultKind::Denied { reason } => {
+                        format!("permission denied: {reason}")
+                    }
+                };
+                serde_json::json!({
+                    "type": "tool_result",
+                    "tool_use_id": tr.tool_use_id,
+                    "content": body,
+                    "is_error": matches!(tr.kind, crate::agent::rounds::ToolResultKind::Error { .. }),
+                })
+            })
+            .collect();
+
+        history.push(Message {
+            role: "user".into(),
+            content: serde_json::to_string(&user_content).unwrap_or_default(),
+        });
+    }
+
+    async fn emit_error_and_stop(
+        &self,
+        app: &Option<AppHandle>,
+        assistant_id: &str,
+        message: &str,
+    ) {
+        use crate::ipc::events::emit_error;
+        emit_error(app.as_ref(), assistant_id, message);
+        self.transition(AgentState::Stop).await;
+        emit_status(app.as_ref(), AgentState::Stop);
+        self.transition(AgentState::Idle).await;
+        emit_status(app.as_ref(), AgentState::Idle);
+    }
+
+    /// 构造工具注册表。Phase 2 内置 10 个工具。
+    pub fn build_tool_registry(&self) -> ToolRegistry {
+        use crate::agent::tools::{
+            ask_user::AskUserTool, background::{BashOutputTool, KillBackgroundTool},
+            bash::BashTool, edit::EditTool, glob::GlobTool, grep::GrepTool, ls::LsTool,
+            read::ReadTool, write::WriteTool,
+        };
+
+        ToolRegistry::new()
+            .register(ReadTool)
+            .register(WriteTool)
+            .register(EditTool)
+            .register(BashTool)
+            .register(BashOutputTool)
+            .register(KillBackgroundTool)
+            .register(GlobTool)
+            .register(GrepTool)
+            .register(LsTool)
+            .register(AskUserTool)
     }
 
     async fn transition(&self, new_state: AgentState) {
@@ -150,3 +445,52 @@ impl AgentLoop {
         *s = new_state;
     }
 }
+
+/// 构造 tool round 的 API 消息（部分持久化用，host 拿到后 emit `agent:partial_assistant`）。
+fn build_tool_round_api_messages(
+    text: &str,
+    tool_uses: &[ToolUseBlock],
+    tool_results: &[crate::agent::rounds::ToolResultBlock],
+) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    if !text.is_empty() {
+        out.push(serde_json::json!({
+            "role": "assistant",
+            "content": [{ "type": "text", "text": text }],
+        }));
+    }
+    if !tool_uses.is_empty() {
+        out.push(serde_json::json!({
+            "role": "assistant",
+            "content": tool_uses.iter().map(|tu| serde_json::json!({
+                "type": "tool_use",
+                "id": tu.id,
+                "name": tu.name,
+                "input": tu.input,
+            })).collect::<Vec<_>>(),
+        }));
+        out.push(serde_json::json!({
+            "role": "user",
+            "content": tool_results.iter().map(|tr| {
+                let body = match &tr.kind {
+                    crate::agent::rounds::ToolResultKind::Success { content } => content.clone(),
+                    crate::agent::rounds::ToolResultKind::Error { message } => message.clone(),
+                    crate::agent::rounds::ToolResultKind::Denied { reason } => {
+                        format!("permission denied: {reason}")
+                    }
+                };
+                serde_json::json!({
+                    "type": "tool_result",
+                    "tool_use_id": tr.tool_use_id,
+                    "content": body,
+                    "is_error": matches!(tr.kind, crate::agent::rounds::ToolResultKind::Error { .. }),
+                })
+            }).collect::<Vec<_>>(),
+        }));
+    }
+    out
+}
+
+/// 反引用类型防止 unused warning
+#[allow(dead_code)]
+fn _ensure_types_used() {}

@@ -1,23 +1,25 @@
 import { create } from "zustand";
 import type { Message } from "@/types/message";
+import type { ToolCallRecord } from "@/types/tool";
 
 interface ChatState {
   messages: Message[];
   currentAssistantId: string | null;
+  /// Per-runId tool records. Each tool call may update multiple times
+  /// (Pending → Success / Cancelled / Error), so we keep them keyed by
+  /// record id and upsert on each event.
+  toolRecordsByRun: Record<string, Record<string, ToolCallRecord>>;
 
-  // 用户发送消息时调用：追加一条 user 消息并预留 assistant 占位
-  appendUserMessage: (text: string) => { userId: string; assistantId: string };
-  // assistant 创建好后（流开始前）注册一次
+  appendUserMessage: (
+    text: string,
+  ) => { userId: string; assistantId: string };
   prepareAssistantMessage: (id: string) => void;
-
-  // 流式：累加 token 到当前 assistant message
   appendToken: (id: string, text: string) => void;
-
-  // 流结束
+  appendStreamDelta: (id: string, text: string) => void;
   markComplete: (id: string) => void;
-
-  // 出错
   markError: (id: string, error: string) => void;
+  upsertToolRecord: (runId: string, record: ToolCallRecord) => void;
+  clearRun: (runId: string) => void;
 }
 
 const newId = (prefix: string) =>
@@ -26,6 +28,7 @@ const newId = (prefix: string) =>
 export const useChatStore = create<ChatState>((set) => ({
   messages: [],
   currentAssistantId: null,
+  toolRecordsByRun: {},
 
   appendUserMessage: (text) => {
     const userId = newId("user");
@@ -73,6 +76,16 @@ export const useChatStore = create<ChatState>((set) => ({
     }));
   },
 
+  appendStreamDelta: (id, text) => {
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === id
+          ? { ...m, content: m.content + text, status: "streaming" }
+          : m,
+      ),
+    }));
+  },
+
   markComplete: (id) => {
     set((state) => ({
       messages: state.messages.map((m) =>
@@ -91,5 +104,25 @@ export const useChatStore = create<ChatState>((set) => ({
       ),
       currentAssistantId: null,
     }));
+  },
+
+  upsertToolRecord: (runId, record) => {
+    set((state) => ({
+      toolRecordsByRun: {
+        ...state.toolRecordsByRun,
+        [runId]: {
+          ...(state.toolRecordsByRun[runId] ?? {}),
+          [record.id]: record,
+        },
+      },
+    }));
+  },
+
+  clearRun: (runId) => {
+    set((state) => {
+      const next = { ...state.toolRecordsByRun };
+      delete next[runId];
+      return { toolRecordsByRun: next };
+    });
   },
 }));

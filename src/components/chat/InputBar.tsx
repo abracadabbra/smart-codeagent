@@ -7,9 +7,14 @@ import { sendMessage } from "@/hooks/useAgentEvents";
  * 底部输入框：禁用条件 = Agent 不在 Idle。
  * 提交时：
  *   1. 在 chatStore 中创建 user + 占位 assistant 两条消息
- *   2. invoke('send_message') 启动 Rust Loop
+ *   2. invoke('send_message') 启动 Rust Loop（前端生成 runId + generation，
+ *      避免后端 race；generation 单调递增便于 cancel 判定）
  *   3. 清空输入框
  */
+const genRef = { n: 0 };
+const newRunId = () =>
+  `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
 export function InputBar() {
   const [text, setText] = useState("");
   const sendingRef = useRef(false);
@@ -26,8 +31,15 @@ export function InputBar() {
 
     try {
       const { assistantId } = appendUserMessage(trimmed);
+      const runId = newRunId();
+      const generation = ++genRef.n;
       setText("");
-      await sendMessage({ text: trimmed, assistantId });
+      await sendMessage({
+        text: trimmed,
+        assistantId,
+        runId,
+        generation,
+      });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("sendMessage failed:", err);
