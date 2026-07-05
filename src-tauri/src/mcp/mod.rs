@@ -7,8 +7,10 @@
 //! - `client`：`StdioMcpClient` — 单 server 持久会话 + reader_task + 单飞门闩
 //! - `manager`：`McpManager` — 多 server 协调 + 状态事件 emit
 
+pub mod client;
 pub mod types;
 
+pub use client::{McpEventSink, McpSession, StdioMcpClient};
 pub use types::{
     looks_sensitive_tool, McpServerState, McpServerStatePayload, McpTool, McpToolCallResult,
     parse_mcp_name, parse_tool_result, tool_definition_from_mcp,
