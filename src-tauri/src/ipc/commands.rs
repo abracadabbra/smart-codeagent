@@ -2,15 +2,20 @@
 //!
 //! Phase 2: send_message 接受 run_id + generation（前端唯一生成，避免后端重复）；
 //! 新增 approve_tool / answer_ask_user 两个 command。
+//! Phase 3.1: 新增 list_mcp_servers / list_mcp_server_states。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, State};
+use tokio::sync::Mutex;
 
 use crate::agent::host_impl::TauriHost;
 use crate::agent::loop_::AgentLoop;
 use crate::agent::tools::AskUserResponseResult;
+use crate::mcp::{McpManager, McpServerState};
+use crate::settings::{ChatMcpServer, Settings};
 
 /// Phase 1 兼容 + Phase 2：用户发消息，启动一轮 Agent Loop。
 /// 立即返回（不阻塞 IPC），实际执行由 tokio::spawn 后台进行。
@@ -88,4 +93,28 @@ pub async fn cancel_run(
         .ok_or_else(|| "TauriHost not managed".to_string())?;
     host.cancel_generation(&run_id);
     Ok(())
+}
+
+/// 列出 settings.json 中配置的所有 MCP server（前端 StatusBar / 设置面板用）。
+#[tauri::command]
+pub async fn list_mcp_servers(
+    app: AppHandle,
+) -> Result<Vec<ChatMcpServer>, String> {
+    let settings = app
+        .try_state::<Arc<Mutex<Settings>>>()
+        .ok_or_else(|| "Settings not managed".to_string())?;
+    let settings = settings.lock().await;
+    Ok(settings.mcp.servers.clone())
+}
+
+/// 列出所有 MCP server 的当前连接状态快照（前端 StatusBar 用）。
+/// 未在缓存中的 server（未初始化）由前端视作 Disconnected。
+#[tauri::command]
+pub async fn list_mcp_server_states(
+    app: AppHandle,
+) -> Result<HashMap<String, McpServerState>, String> {
+    let mcp_manager = app
+        .try_state::<Arc<McpManager>>()
+        .ok_or_else(|| "McpManager not managed".to_string())?;
+    Ok(mcp_manager.list_server_states().await)
 }

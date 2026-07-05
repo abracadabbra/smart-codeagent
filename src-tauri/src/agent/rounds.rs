@@ -6,15 +6,18 @@
 //! - 不并行（先用串行，更稳）；下一轮再 join_all
 //! - approval gate 走 execute_tool_call 内部
 //! - 失败的 tool 也产一个 ToolResultBlock（Error kind），不阻断后续
+//!
+//! Phase 3.1：新增 `mcp__` 前缀路由分支，MCP tool 走 `dispatch_mcp`。
 
 use std::sync::Arc;
 
 use crate::agent::host::AgentHost;
 use crate::agent::tools::{
-    ToolCallRecord, ToolCallStatus, ToolContext, ToolOutput, ToolRegistry,
+    ChatToolDefinition, ToolCallRecord, ToolCallStatus, ToolContext, ToolOutput, ToolRegistry,
 };
 use crate::agent::types::ToolUseBlock;
 use crate::agent::host_impl::emit_tool_rejected;
+use crate::mcp::{parse_mcp_name, McpManager};
 use serde::Serialize;
 use tauri::AppHandle;
 use tracing::{debug, info, warn};
@@ -36,8 +39,13 @@ pub struct ToolResultBlock {
 /// 派发一轮 tool_use：依次执行每个 tool，收集结果。
 ///
 /// 借 Kivio `rounds.rs:36 run_tool_round`，砍掉了 multi-round 嵌套。
+///
+/// `mcp_manager`：Phase 3.1 MCP tool 路由用。`None` 时 MCP tool 调用返回 Error。
+/// `tool_defs`：合并后的 native + mcp tool 定义，用于 MCP tool 的 sensitive 查找。
 pub async fn dispatch_round(
     tools: &ToolRegistry,
+    mcp_manager: Option<&Arc<McpManager>>,
+    tool_defs: &[ChatToolDefinition],
     host: &Arc<dyn AgentHost>,
     ctx: &ToolContext,
     tool_uses: &[ToolUseBlock],
@@ -54,7 +62,7 @@ pub async fn dispatch_round(
             "dispatch[{}]: id={}, name={}, input={}",
             i, tool_use.id, tool_use.name, tool_use.input
         );
-        let result = dispatch_single(tools, host, ctx, tool_use).await;
+        let result = dispatch_single(tools, mcp_manager, tool_defs, host, ctx, tool_use).await;
         info!(
             "dispatch[{}] done: id={}, result_kind={}",
             i,
@@ -76,10 +84,17 @@ pub async fn dispatch_round(
 
 async fn dispatch_single(
     tools: &ToolRegistry,
+    mcp_manager: Option<&Arc<McpManager>>,
+    tool_defs: &[ChatToolDefinition],
     host: &Arc<dyn AgentHost>,
     ctx: &ToolContext,
     tool_use: &ToolUseBlock,
 ) -> ToolResultBlock {
+    // Phase 3.1: MCP tool 命名空间路由
+    if tool_use.name.starts_with("mcp__") {
+        return dispatch_mcp(mcp_manager, tool_defs, host, ctx, tool_use).await;
+    }
+
     let tool_call_id = tool_use.id.clone();
     let tool_name = tool_use.name.clone();
 
@@ -265,6 +280,179 @@ async fn dispatch_single(
             ToolResultBlock {
                 tool_use_id: tool_call_id,
                 kind,
+            }
+        }
+    }
+}
+
+/// 派发 MCP tool 调用：解析命名空间 → approval gate（若 sensitive）→ mcp_manager.call_tool。
+///
+/// 设计参照 [design.md §2.3](../../.trellis/tasks/07-05-phase3.1-mcp-integration/design.md)。
+/// - sensitive 查找：从 `tool_defs` 中按 name 匹配；未找到则默认 sensitive=true（保守）。
+/// - MCP `isError=true`：仍算 Success（server 自报 tool-level 错误，content 是错误描述），
+///   structured_content 设为 `{"isError":true}` 让 LLM 知晓。
+/// - transport 错误（超时/死连接）：返回 Error kind，content = `MCP tool error: {e}`。
+async fn dispatch_mcp(
+    mcp_manager: Option<&Arc<McpManager>>,
+    tool_defs: &[ChatToolDefinition],
+    host: &Arc<dyn AgentHost>,
+    ctx: &ToolContext,
+    tool_use: &ToolUseBlock,
+) -> ToolResultBlock {
+    let tool_call_id = tool_use.id.clone();
+    let tool_name = tool_use.name.clone();
+
+    let mcp_manager = match mcp_manager {
+        Some(m) => m,
+        None => {
+            return ToolResultBlock {
+                tool_use_id: tool_call_id,
+                kind: ToolResultKind::Error {
+                    message: "MCP manager not available".into(),
+                },
+            };
+        }
+    };
+
+    let (server_id, mcp_tool_name) = match parse_mcp_name(&tool_name) {
+        Some(parsed) => parsed,
+        None => {
+            return ToolResultBlock {
+                tool_use_id: tool_call_id,
+                kind: ToolResultKind::Error {
+                    message: format!("invalid MCP tool name: {tool_name}"),
+                },
+            };
+        }
+    };
+
+    // sensitive 查找：从合并后的 tool_defs 中按 name 匹配。
+    // 未找到（理论上不该发生，因为 prepare 阶段已合并）→ 保守视为 sensitive。
+    let sensitive = tool_defs
+        .iter()
+        .find(|d| d.name == tool_name)
+        .map(|d| d.sensitive)
+        .unwrap_or(true);
+
+    // approval gate（与 native destructive 同路径）
+    if sensitive {
+        info!(
+            "MCP tool {} requires approval (sensitive={})",
+            tool_name, sensitive
+        );
+        let mut record = ToolCallRecord {
+            id: tool_call_id.clone(),
+            name: tool_name.clone(),
+            source: "mcp".into(),
+            server_id: Some(server_id.clone()),
+            arguments: serde_json::to_string(&tool_use.input).unwrap_or_default(),
+            status: ToolCallStatus::Pending,
+            result_preview: None,
+            error: None,
+            duration_ms: None,
+            started_at: Some(chrono::Utc::now().timestamp()),
+            completed_at: None,
+            round: ctx.round,
+            sensitive: true,
+            artifacts: vec![],
+            structured_content: None,
+        };
+        host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+
+        let mut sub_ctx = ctx.clone();
+        sub_ctx.tool_call_id = tool_call_id.clone();
+        let approved = host.request_tool_approval(&sub_ctx, &record).await;
+
+        if !approved {
+            warn!("MCP tool {} approval denied by user", tool_name);
+            record.status = ToolCallStatus::Cancelled;
+            record.error = Some("user denied approval".into());
+            record.completed_at = Some(chrono::Utc::now().timestamp());
+            host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+            return ToolResultBlock {
+                tool_use_id: tool_call_id,
+                kind: ToolResultKind::Denied {
+                    reason: "user denied approval".into(),
+                },
+            };
+        }
+    }
+
+    // 实际执行
+    let started = chrono::Utc::now().timestamp();
+    info!(
+        "executing MCP tool {}: server={}, tool={}, args={}",
+        tool_name, server_id, mcp_tool_name, tool_use.input
+    );
+    let result = mcp_manager
+        .call_tool(&server_id, &mcp_tool_name, tool_use.input.clone())
+        .await;
+    let duration_ms = (chrono::Utc::now().timestamp() - started).max(0) as u64;
+
+    match result {
+        Ok(res) => {
+            // MCP isError=true → 仍算 Success（server 自报 tool-level 错误）
+            let structured = if res.is_error {
+                Some(serde_json::json!({ "isError": true }))
+            } else {
+                res.structured_content.clone()
+            };
+            let preview = if res.content.len() > 200 {
+                format!("{}…", &res.content[..200])
+            } else {
+                res.content.clone()
+            };
+            let record = ToolCallRecord {
+                id: tool_call_id.clone(),
+                name: tool_name.clone(),
+                source: "mcp".into(),
+                server_id: Some(server_id),
+                arguments: serde_json::to_string(&tool_use.input).unwrap_or_default(),
+                status: ToolCallStatus::Success,
+                result_preview: Some(preview),
+                error: None,
+                duration_ms: Some(duration_ms),
+                started_at: Some(started),
+                completed_at: Some(chrono::Utc::now().timestamp()),
+                round: ctx.round,
+                sensitive,
+                artifacts: res.artifacts.clone(),
+                structured_content: structured,
+            };
+            host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+
+            ToolResultBlock {
+                tool_use_id: tool_call_id,
+                kind: ToolResultKind::Success {
+                    content: res.content,
+                },
+            }
+        }
+        Err(e) => {
+            let msg = format!("MCP tool error: {e}");
+            warn!("MCP tool {} failed: {}", tool_name, msg);
+            let record = ToolCallRecord {
+                id: tool_call_id.clone(),
+                name: tool_name.clone(),
+                source: "mcp".into(),
+                server_id: Some(server_id),
+                arguments: serde_json::to_string(&tool_use.input).unwrap_or_default(),
+                status: ToolCallStatus::Error,
+                result_preview: None,
+                error: Some(msg.clone()),
+                duration_ms: Some(duration_ms),
+                started_at: Some(started),
+                completed_at: Some(chrono::Utc::now().timestamp()),
+                round: ctx.round,
+                sensitive,
+                artifacts: vec![],
+                structured_content: None,
+            };
+            host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+
+            ToolResultBlock {
+                tool_use_id: tool_call_id,
+                kind: ToolResultKind::Error { message: msg },
             }
         }
     }

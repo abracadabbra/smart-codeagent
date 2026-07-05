@@ -20,8 +20,10 @@ use crate::agent::types::{AgentRunConfig, AgentRunResult, RoundResponse, ToolUse
 use crate::agent::{AgentState, Message};
 use crate::config::AnthropicConfig;
 use crate::ipc::events::{emit_status, emit_stream_done, emit_tool_record};
+use crate::mcp::McpManager;
 use crate::providers::anthropic::AnthropicClient;
 use crate::providers::{MessagesRequest, Provider, StreamChunk};
+use crate::settings::Settings;
 use futures::StreamExt;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -102,7 +104,7 @@ impl AgentLoop {
         let anthropic_cfg = AnthropicConfig::from_env();
         let provider = AnthropicClient::new(anthropic_cfg);
         let tools = self.build_tool_registry();
-        let tool_defs = tools.definitions();
+        let mut tool_defs = tools.definitions();
 
         // 4. host：复用 lib.rs 在 setup 时 manage 的单例 TauriHost。
         //    不能每次新建——否则 approve_tool / answer_ask_user 命令通过 try_state
@@ -121,6 +123,30 @@ impl AgentLoop {
                 return Ok(());
             }
         };
+
+        // 4.5 Phase 3.1: 合并 MCP server 暴露的工具到 tool_defs
+        let mcp_manager: Option<Arc<McpManager>> = app.as_ref().and_then(|handle| {
+            handle
+                .try_state::<Arc<McpManager>>()
+                .map(|s| s.inner().clone())
+        });
+        let settings_state: Option<Arc<Mutex<Settings>>> = app.as_ref().and_then(|handle| {
+            handle
+                .try_state::<Arc<Mutex<Settings>>>()
+                .map(|s| s.inner().clone())
+        });
+        if let (Some(mcp_mgr), Some(settings_state)) =
+            (mcp_manager.as_ref(), settings_state.as_ref())
+        {
+            let settings = settings_state.lock().await;
+            let mcp_defs = mcp_mgr.list_all_tools(&settings).await;
+            info!(
+                "merged {} MCP tool(s) into tool_defs (total={})",
+                mcp_defs.len(),
+                tool_defs.len() + mcp_defs.len()
+            );
+            tool_defs.extend(mcp_defs);
+        }
 
         // 5. Phase 2 状态机：先把 tool 循环跑完，再决定是否需要 synthesis
         self.transition(AgentState::ToolLoop).await;
@@ -210,6 +236,8 @@ impl AgentLoop {
 
                 let tool_results = crate::agent::rounds::dispatch_round(
                     &tools,
+                    mcp_manager.as_ref(),
+                    &tool_defs,
                     &host,
                     &ctx,
                     &round_resp.tool_uses,

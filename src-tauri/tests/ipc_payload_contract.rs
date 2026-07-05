@@ -309,3 +309,95 @@ fn approve_tool_args_deserializes_camel_case() {
         "后端不应接受 snake_case（前端发的是 camelCase）"
     );
 }
+
+// ============================================================================
+// Phase 3.1 新增 2 个合约测试（MCP 相关）
+// ============================================================================
+
+#[test]
+fn mcp_server_state_payload_serializes_camel_case() {
+    use smart_codeagent_lib::mcp::{McpServerState, McpServerStatePayload};
+
+    // Connected
+    let p = McpServerStatePayload {
+        server_id: "fs".into(),
+        state: McpServerState::Connected,
+    };
+    let json = serde_json::to_value(&p).unwrap();
+    assert_eq!(json["serverId"], "fs", "前端 useAgentEvents.ts 依赖 serverId");
+    assert_eq!(json["state"]["kind"], "connected");
+    assert!(json.get("server_id").is_none(), "snake_case 泄漏");
+
+    // Error { message }
+    let p_err = McpServerStatePayload {
+        server_id: "db".into(),
+        state: McpServerState::Error {
+            message: "connection refused".into(),
+        },
+    };
+    let j_err = serde_json::to_value(&p_err).unwrap();
+    assert_eq!(j_err["serverId"], "db");
+    assert_eq!(j_err["state"]["kind"], "error");
+    assert_eq!(j_err["state"]["message"], "connection refused");
+
+    // Connecting / Disconnected
+    let p_conn = McpServerStatePayload {
+        server_id: "x".into(),
+        state: McpServerState::Connecting,
+    };
+    assert_eq!(serde_json::to_value(&p_conn).unwrap()["state"]["kind"], "connecting");
+
+    let p_disc = McpServerStatePayload {
+        server_id: "x".into(),
+        state: McpServerState::Disconnected,
+    };
+    assert_eq!(serde_json::to_value(&p_disc).unwrap()["state"]["kind"], "disconnected");
+}
+
+#[test]
+fn chat_mcp_server_round_trip_camel_case() {
+    use smart_codeagent_lib::settings::ChatMcpServer;
+    use std::collections::HashMap;
+
+    // 构造前端会发的 camelCase JSON（settings.json 格式）
+    let mut env = HashMap::new();
+    env.insert("FOO".to_string(), "bar".to_string());
+    let json = serde_json::json!({
+        "id": "filesystem",
+        "name": "Filesystem (/tmp)",
+        "enabled": true,
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+        "env": { "FOO": "bar" },
+        "enabledTools": ["read_file", "write_file"]
+    });
+
+    let server: ChatMcpServer = serde_json::from_value(json).unwrap();
+    assert_eq!(server.id, "filesystem");
+    assert_eq!(server.name, "Filesystem (/tmp)");
+    assert!(server.enabled);
+    assert_eq!(server.transport, "stdio");
+    assert_eq!(server.command, "npx");
+    assert_eq!(server.args.len(), 3);
+    assert_eq!(server.env.get("FOO").map(|s| s.as_str()), Some("bar"));
+    assert!(server.cwd.is_none());
+    assert_eq!(server.enabled_tools, vec!["read_file", "write_file"]);
+
+    // 反向序列化仍为 camelCase
+    let out = serde_json::to_value(&server).unwrap();
+    assert_eq!(out["id"], "filesystem");
+    assert_eq!(out["enabledTools"], serde_json::json!(["read_file", "write_file"]));
+    assert!(out.get("enabled_tools").is_none(), "snake_case 泄漏到 wire");
+
+    // 默认值：enabled=true, transport="stdio"（缺省时）
+    let minimal = serde_json::json!({
+        "id": "x",
+        "name": "X",
+        "command": "echo"
+    });
+    let s: ChatMcpServer = serde_json::from_value(minimal).unwrap();
+    assert!(s.enabled, "enabled 缺省必须为 true");
+    assert_eq!(s.transport, "stdio", "transport 缺省必须为 stdio");
+    assert!(s.enabled_tools.is_empty());
+}
