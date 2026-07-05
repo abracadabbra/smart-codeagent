@@ -8,9 +8,11 @@
 //! - `manager`：`McpManager` — 多 server 协调 + 状态事件 emit
 
 pub mod client;
+pub mod manager;
 pub mod types;
 
 pub use client::{McpEventSink, McpSession, StdioMcpClient};
+pub use manager::{McpManager, TauriEventSink};
 pub use types::{
     looks_sensitive_tool, McpServerState, McpServerStatePayload, McpTool, McpToolCallResult,
     parse_mcp_name, parse_tool_result, tool_definition_from_mcp,
