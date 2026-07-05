@@ -4,6 +4,7 @@ pub mod agent;
 pub mod config;
 pub mod ipc;
 pub mod providers;
+pub mod settings;
 
 use std::sync::Arc;
 
