@@ -4,48 +4,23 @@
 
 ---
 
-## Overview
+## Status: Deferred to Phase 3
 
-<!--
-Document your project's database conventions here.
+Phase 1–2 has **no database**. Session persistence (SQLite via `rusqlite`)
+is a Phase 3 deliverable per the product PRD. This file exists so the
+spec tree stays complete; the rules below will be filled when the
+storage layer lands.
 
-Questions to answer:
-- What ORM/query library do you use?
-- How are migrations managed?
-- What are the naming conventions for tables/columns?
-- How do you handle transactions?
--->
+When Phase 3 starts, this file must cover:
 
-(To be filled by the team)
+- ORM choice (`rusqlite` raw SQL vs `sqlx` vs `diesel`) and the
+  reasoning against the other two.
+- Migration tool & directory layout (`src-tauri/migrations/`).
+- Transaction boundaries and the convention for long-running async
+  work (SQLite + Tokio: how to avoid blocking the runtime).
+- Naming: snake_case tables, `id INTEGER PRIMARY KEY`,
+  `created_at` / `updated_at` integers (unix ms, never strings).
+- Soft-delete vs hard-delete decision for messages / sessions.
 
----
-
-## Query Patterns
-
-<!-- How should queries be written? Batch operations? -->
-
-(To be filled by the team)
-
----
-
-## Migrations
-
-<!-- How to create and run migrations -->
-
-(To be filled by the team)
-
----
-
-## Naming Conventions
-
-<!-- Table names, column names, index names -->
-
-(To be filled by the team)
-
----
-
-## Common Mistakes
-
-<!-- Database-related mistakes your team has made -->
-
-(To be filled by the team)
+Do **not** open this file until then. Adding speculative rules now
+would encode guesses that almost certainly change.
