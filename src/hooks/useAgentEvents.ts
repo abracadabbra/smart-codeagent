@@ -46,6 +46,7 @@ export function useAgentEvents() {
   const clearPrompts = useAgentStore((s) => s.clearPrompts);
 
   useEffect(() => {
+    let cancelled = false;
     const unlisteners: UnlistenFn[] = [];
 
     void (async () => {
@@ -152,8 +153,15 @@ export function useAgentEvents() {
           ],
         ];
 
+        // 逐个订阅，注册一个 push 一个，这样 cleanup 时即使 async 还没全跑完
+        // 也能取消已注册的；用 cancelled flag 防止 StrictMode 双订阅。
         for (const [name, handler] of handlers) {
+          if (cancelled) return;
           const unlisten = await listen<unknown>(name, handler);
+          if (cancelled) {
+            unlisten();
+            return;
+          }
           unlisteners.push(unlisten);
         }
       } catch (err) {
@@ -164,6 +172,7 @@ export function useAgentEvents() {
     })();
 
     return () => {
+      cancelled = true;
       unlisteners.forEach((u) => u());
       clearPrompts();
     };

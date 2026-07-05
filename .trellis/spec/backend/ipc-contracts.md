@@ -259,3 +259,205 @@ so absent fields don't appear as `"reasoningDelta": null` on the wire. This keep
 frontend optional-field semantics (`reasoningDelta?: string`) honest.
 
 Required fields (e.g. `runId`, `msgId`) MUST NOT skip — they always serialize.
+
+---
+
+## Scenario: LLM Provider Protocol — OpenAI Chat Completions Only
+
+### 1. Scope / Trigger
+
+Trigger: any task that adds or modifies the LLM provider (`src-tauri/src/providers/`),
+changes the `Message` struct, or wires tool calling. This spec exists because we
+burned ~3 hours debugging "tool_use as plain text" symptoms caused by using the
+wrong API protocol for the wrong model family.
+
+### 2. Decision
+
+**Use OpenAI `/v1/chat/completions` exclusively, NOT Anthropic `/v1/messages`.**
+
+This applies even when the provider is SenseNova (which exposes both endpoints).
+The file is still named `anthropic.rs` for historical reasons (Phase 1 used the
+Anthropic protocol), but the implementation talks OpenAI.
+
+### 3. Why (the trap we fell into)
+
+SenseNova's `/v1/messages` endpoint **only translates tool_use content blocks for
+Claude-family models**. For DeepSeek / Qwen / GLM models (which is what we ship by
+default — `deepseek-v4-flash`), `/v1/messages` silently degrades tool calling:
+
+- LLM emits `tool_use` JSON as plain text (`[{"id":"call_xxx","input":{...},"name":"read_file","type":"tool_use"}]`)
+- The `call_` ID prefix is OpenAI format (Anthropic would be `toolu_`)
+- `content_block_start` / `input_json_delta` SSE events never arrive
+- `delta.content` carries the whole JSON blob as text
+
+Switching to `/v1/chat/completions` makes DeepSeek/Qwen/GLM use native OpenAI
+tool calling (`delta.tool_calls[].function.arguments` streaming) and works correctly.
+
+### 4. Contracts
+
+**Endpoint**: `POST {base_url}/v1/chat/completions`
+
+**Request body shape**:
+```json
+{
+  "model": "deepseek-v4-flash",
+  "max_tokens": 8192,
+  "messages": [
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "content": null, "tool_calls": [...]},
+    {"role": "tool", "tool_call_id": "call_xxx", "content": "..."}
+  ],
+  "stream": true,
+  "tools": [{"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}]
+}
+```
+
+**SSE response shape** (OpenAI streaming):
+- `delta.content` — text deltas (skip empty strings)
+- `delta.tool_calls[].index` — distinguishes parallel tool_calls (0, 1, 2...)
+- First `delta.tool_calls` block for an index carries `id` + `function.name` + (optional) `arguments`
+- Subsequent blocks carry only `function.arguments` deltas (JSON string fragments)
+- `finish_reason: ""` (empty string) on intermediate chunks — MUST be treated as `None`
+- `finish_reason: "tool_calls"` — all tool_calls done, emit `ToolUseEnd` + `Done`
+- `finish_reason: "stop"` / `"length"` / `"content_filter"` — final, emit `Done`
+- `data: [DONE]` — stream end
+
+**Critical quirk**: SenseNova (and many OpenAI-compatible providers) emit
+`finish_reason: ""` on every intermediate chunk. Treat empty-string `finish_reason`
+as `None`, otherwise the first chunk triggers `StreamChunk::Done` and the stream
+ends immediately with no output.
+
+### 5. Message struct serde contract
+
+`agent::Message` has `#[serde(rename_all = "camelCase")]` at the struct level
+(for internal consistency and because some downstream consumers expect camelCase).
+**But two fields MUST be force-renamed to snake_case** because they go on the wire
+to the LLM API, which strictly requires snake_case:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    pub role: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    /// OpenAI tool_calls — MUST be snake_case on the wire
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "tool_calls")]
+    pub tool_calls: Option<Vec<OpenAiToolCall>>,
+    /// OpenAI tool_call_id — MUST be snake_case on the wire
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "tool_call_id")]
+    pub tool_call_id: Option<String>,
+}
+```
+
+If these `rename` attributes are removed, serde serializes `tool_calls` as
+`toolCalls` and `tool_call_id` as `toolCallId`. The OpenAI API silently ignores
+unknown fields, so:
+- assistant message loses its `tool_calls` array
+- the following `role: "tool"` message references a `tool_call_id` that the API
+  no longer recognizes
+- API returns `400 invalid tool_call_id` on every multi-round tool call
+
+Regression test: `providers::anthropic::tests::message_serializes_openai_snake_case`
+asserts both that `tool_calls` (snake) exists AND `toolCalls` (camel) does not.
+
+### 6. Tool call flow (multi-round)
+
+```
+User text
+   ↓
+LLM stream → delta.tool_calls (id + name + arguments fragments)
+   ↓ finish_reason="tool_calls"
+emit ToolUseEnd → parse all accumulated input_raw → tool_uses vec
+   ↓
+dispatch_round: execute each tool_use
+   ↓
+append to history:
+   Message::assistant_tool_calls(vec![OpenAiToolCall { id, type:"function", function:{name, arguments: JSON_string} }])
+   Message::tool_result(tool_call_id, content)   // one per tool
+   ↓
+Next LLM round with full history
+```
+
+**Key invariant**: every `tool_call_id` in the assistant message's `tool_calls`
+MUST have a corresponding `role: "tool"` message immediately after, with matching
+`tool_call_id`. Missing or mismatched IDs cause `400 invalid tool_call_id`.
+
+### 7. Validation & Error Matrix
+
+| Condition | Symptom | Error |
+|---|---|---|
+| Using `/v1/messages` with DeepSeek model | LLM emits tool_use as plain text (`call_` IDs visible in chat) | No error; silent degradation |
+| `finish_reason: ""` treated as `Some("")` | Stream ends after first chunk, no output | No error; silent |
+| `tool_calls` field serialized as `toolCalls` | First round works, second round 400 | `400 invalid tool_call_id` |
+| `tool_call_id` mismatched between assistant + tool message | 400 on next round | `400 invalid tool_call_id` |
+| `arguments` not a JSON string (e.g. raw object) | 400 on request | `400 invalid_request_error` |
+
+### 8. Tests Required
+
+- `parses_text_delta` — `delta.content` produces `StreamChunk::Text`
+- `parses_tool_call_start_and_args` — first block emits `ToolUseStart`, subsequent blocks emit `ToolUseInputDelta`
+- `parses_finish_reason_tool_calls` — `tool_calls` emits `ToolUseEnd` + `Done`
+- `parses_finish_reason_stop` — `stop` emits `Done` only
+- `parses_done_marker` — `[DONE]` emits `Done`
+- `handles_multiple_tool_calls_in_parallel` — two indices each get their own `ToolUseStart`
+- `openai_tool_call_serializes_correctly` — `OpenAiToolCall` JSON has `id`/`type`/`function.name`/`function.arguments`
+- `message_serializes_openai_snake_case` — `Message` serializes `tool_calls` (snake) not `toolCalls` (camel)
+
+### 9. Wrong vs Correct
+
+**Wrong — using `/v1/messages` with a non-Claude model**
+
+```rust
+let url = format!("{}/v1/messages", self.cfg.base_url);
+// Works for Claude, silently breaks tool calling for DeepSeek/Qwen/GLM
+```
+
+**Correct — always use `/v1/chat/completions`**
+
+```rust
+let url = format!("{}/v1/chat/completions", self.cfg.base_url);
+// Native OpenAI tool calling works for all model families
+```
+
+**Wrong — treating empty `finish_reason` as a real value**
+
+```rust
+if let Some(reason) = choice.finish_reason.as_deref() {
+    // Some("") enters here! Triggers Done on every chunk.
+    emit_done(reason);
+}
+```
+
+**Correct — filter empty strings**
+
+```rust
+let reason_opt = choice
+    .finish_reason
+    .as_deref()
+    .filter(|s| !s.is_empty());
+if let Some(reason) = reason_opt { ... }
+```
+
+**Wrong — letting struct-level camelCase leak into API field names**
+
+```rust
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    pub tool_calls: Option<Vec<...>>,       // serializes as "toolCalls" — WRONG
+    pub tool_call_id: Option<String>,       // serializes as "toolCallId" — WRONG
+}
+```
+
+**Correct — per-field rename override**
+
+```rust
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    #[serde(rename = "tool_calls")]
+    pub tool_calls: Option<Vec<...>>,       // serializes as "tool_calls" — correct
+    #[serde(rename = "tool_call_id")]
+    pub tool_call_id: Option<String>,       // serializes as "tool_call_id" — correct
+}
+```

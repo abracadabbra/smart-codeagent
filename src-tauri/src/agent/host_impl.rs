@@ -88,10 +88,18 @@ impl AgentHost for TauriHost {
     }
 
     fn emit_stream_done(&self, run_id: &str, message_id: &str, reason: &str) {
+        tracing::info!(
+            "emit stream_done: run_id={}, msg_id={}, reason={}",
+            run_id, message_id, reason
+        );
         emit_stream_done(Some(&self.app), run_id, message_id, reason);
     }
 
     fn emit_tool_record(&self, run_id: &str, message_id: &str, record: &ToolCallRecord) {
+        tracing::debug!(
+            "emit tool_record: run_id={}, tool={}, status={:?}, id={}",
+            run_id, record.name, record.status, record.id
+        );
         emit_tool_record(Some(&self.app), run_id, message_id, record);
     }
 
@@ -113,6 +121,10 @@ impl AgentHost for TauriHost {
             arguments: record.arguments.clone(),
             sensitive: record.sensitive,
         };
+        tracing::info!(
+            "emit approval_request: approval_id={}, tool={}, tool_call_id={}",
+            approval_id, record.name, ctx.tool_call_id
+        );
         if let Err(e) = self.app.emit(EVT_APPROVAL_REQUEST, payload) {
             tracing::warn!("emit approval_request failed: {e}");
             self.approvals.lock().unwrap().remove(&approval_id);
@@ -122,10 +134,25 @@ impl AgentHost for TauriHost {
         Box::pin(async move {
             // 60 秒超时
             match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
-                Ok(Ok(allow)) => allow,
-                Ok(Err(_)) => false, // sender dropped
+                Ok(Ok(allow)) => {
+                    tracing::info!(
+                        "approval {} resolved: allow={}",
+                        approval_id, allow
+                    );
+                    allow
+                }
+                Ok(Err(_)) => {
+                    tracing::warn!(
+                        "approval {} sender dropped without response",
+                        approval_id
+                    );
+                    false
+                }
                 Err(_) => {
-                    tracing::warn!("approval {} timed out", approval_id);
+                    tracing::warn!(
+                        "approval {} timed out (60s) — likely modal didn't show or user didn't respond",
+                        approval_id
+                    );
                     false
                 }
             }
@@ -151,6 +178,10 @@ impl AgentHost for TauriHost {
             tool_call_id: ctx.tool_call_id.to_string(),
             prompt: payload.clone(),
         };
+        tracing::info!(
+            "emit ask_user_prompt: ask_user_id={}, tool_call_id={}",
+            ask_user_id, ctx.tool_call_id
+        );
         if let Err(e) = self.app.emit(EVT_ASK_USER_PROMPT, event_payload) {
             tracing::warn!("emit ask_user_prompt failed: {e}");
             self.ask_users.lock().unwrap().remove(&ask_user_id);
@@ -160,11 +191,20 @@ impl AgentHost for TauriHost {
         Box::pin(async move {
             // 5 分钟超时（Kivio 同款）
             match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
-                Ok(Ok(resp)) => resp,
-                _ => AskUserResponseResult {
-                    phase: "timeout".into(),
-                    answers: Default::default(),
-                },
+                Ok(Ok(resp)) => {
+                    tracing::info!(
+                        "ask_user {} resolved: phase={}",
+                        ask_user_id, resp.phase
+                    );
+                    resp
+                }
+                _ => {
+                    tracing::warn!("ask_user {} timed out (300s)", ask_user_id);
+                    AskUserResponseResult {
+                        phase: "timeout".into(),
+                        answers: Default::default(),
+                    }
+                }
             }
         })
     }
@@ -176,6 +216,10 @@ impl AgentHost for TauriHost {
         records: &[ToolCallRecord],
         api_messages: &[serde_json::Value],
     ) {
+        tracing::debug!(
+            "emit partial_assistant: run_id={}, records={}, api_msgs={}",
+            run_id, records.len(), api_messages.len()
+        );
         let payload = AgentPartialAssistantPayload {
             run_id: run_id.to_string(),
             msg_id: message_id.to_string(),

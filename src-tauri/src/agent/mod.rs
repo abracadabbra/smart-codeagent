@@ -39,12 +39,82 @@ impl AgentState {
     }
 }
 
-/// 多轮对话中的单条消息。
+/// 多轮对话中的单条消息（OpenAI chat completions 格式）。
+///
+/// 三种形态：
+/// - 普通文本：`role` + `content: Some("text")`
+/// - assistant 工具调用：`role: "assistant"` + `content: None` + `tool_calls: Some([...])`
+/// - 工具结果：`role: "tool"` + `content: Some(result)` + `tool_call_id: Some(id)`
+///
+/// 字段命名说明：
+/// - `tool_calls` 和 `tool_call_id` 强制 snake_case（OpenAI API 要求），
+///   不跟随 struct 级别的 `rename_all = "camelCase"`。
+/// - 前端 IPC payload（Tauri event）用的是 camelCase，但那是另一套类型
+///   （见 `ipc/events.rs`），Message 只用于 LLM API 通信。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub role: String,
-    pub content: String,
+    /// 文本内容；assistant 调工具时为 None（OpenAI 要求 null）
+    #[serde(default)]
+    pub content: Option<String>,
+    /// OpenAI tool_calls 数组（仅 assistant 调工具时存在）
+    /// 注意：字段名强制 snake_case，匹配 OpenAI API 要求
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "tool_calls")]
+    pub tool_calls: Option<Vec<OpenAiToolCall>>,
+    /// OpenAI tool_call_id（仅 role="tool" 时存在）
+    /// 注意：字段名强制 snake_case，匹配 OpenAI API 要求
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "tool_call_id")]
+    pub tool_call_id: Option<String>,
+}
+
+/// OpenAI chat completions 的 tool_call 对象。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: String, // 恒为 "function"
+    pub function: OpenAiFunction,
+}
+
+/// OpenAI tool_call 内的 function 块。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiFunction {
+    pub name: String,
+    /// JSON 字符串形式的参数（OpenAI 要求 string，不是 object）
+    pub arguments: String,
+}
+
+impl Message {
+    /// 便捷构造：普通文本消息。
+    pub fn text(role: &str, content: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    /// 便捷构造：assistant 工具调用消息。
+    pub fn assistant_tool_calls(tool_calls: Vec<OpenAiToolCall>) -> Self {
+        Self {
+            role: "assistant".into(),
+            content: None,
+            tool_calls: Some(tool_calls),
+            tool_call_id: None,
+        }
+    }
+
+    /// 便捷构造：工具结果消息。
+    pub fn tool_result(tool_call_id: &str, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".into(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.into()),
+        }
+    }
 }
 
 pub mod host;

@@ -1,12 +1,14 @@
 //! LLM Provider 抽象 + 实现。
 //!
-//! 当前实现走 Anthropic Messages API 兼容协议（`AnthropicClient`），默认指向
+//! 当前实现走 OpenAI Chat Completions 兼容协议（`AnthropicClient`），默认指向
 //! SenseNova (`https://token.sensenova.cn`) + `deepseek-v4-flash`。
-//! 协议层完全兼容（Body + SSE 事件序列），仅鉴权头从 `x-api-key` 换成
-//! `Authorization: Bearer`（见 `anthropic.rs`）。
 //!
-//! 真正的 OpenAI 兼容 / Gemini / 自定义 Provider 留到 Phase 2 走
-//! `OpenAICompatible` 分支。
+//! 为什么不用 Anthropic `/v1/messages`：
+//! - SenseNova 的 `/v1/messages` 只对 Claude 系列模型翻译 tool_use content block；
+//! - 对 DeepSeek / Qwen 等模型，tool_use 被退化成纯文本输出；
+//! - `/v1/chat/completions` 是 OpenAI 标准，所有模型原生支持 tool calling。
+//!
+//! 文件名保留 `anthropic.rs` 是历史原因（Phase 1 用 Anthropic 协议）。
 
 pub mod anthropic;
 
@@ -35,7 +37,10 @@ pub enum ProviderError {
 
 pub type ProviderResult<T> = Result<T, ProviderError>;
 
-/// Anthropic Messages API 请求体（Phase 2 加 `tools` 字段）。
+/// OpenAI chat completions 请求体。
+///
+/// `system` 字段由 provider 转成 messages 数组里的第一条 system role 消息
+/// （OpenAI 不用顶层 `system` 字段）。
 #[derive(Debug, Clone, Serialize)]
 pub struct MessagesRequest {
     pub model: String,
@@ -43,7 +48,7 @@ pub struct MessagesRequest {
     pub messages: Vec<Message>,
     pub system: Option<String>,
     pub stream: bool,
-    /// Phase 2 新增：可用工具定义（Anthropic `tools` 字段）
+    /// 可用工具定义（内部格式，provider 转成 OpenAI function calling 格式）
     #[serde(default)]
     pub tools: Vec<ChatToolDefinition>,
 }

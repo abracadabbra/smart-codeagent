@@ -95,10 +95,7 @@ impl AgentLoop {
         // 2. 构造消息历史（追加用户消息）
         {
             let mut history = self.history.lock().await;
-            history.push(Message {
-                role: "user".into(),
-                content: user_text,
-            });
+            history.push(Message::text("user", user_text));
         }
 
         // 3. 构造 provider + tool registry
@@ -152,6 +149,11 @@ impl AgentLoop {
                 history.clone()
             };
 
+            info!(
+                "round {round} start: requesting LLM (history len={})",
+                snapshot.len()
+            );
+
             let req = MessagesRequest {
                 model: self.config.model.clone(),
                 max_tokens: self.config.max_tokens,
@@ -183,6 +185,13 @@ impl AgentLoop {
             )
             .await;
 
+            info!(
+                "round {round} done: text_len={}, tool_uses={}, stop_reason={:?}",
+                round_resp.text.len(),
+                round_resp.tool_uses.len(),
+                round_resp.stop_reason
+            );
+
             // 如果有 tool_use 派发它们
             if !round_resp.tool_uses.is_empty() {
                 let ctx = ToolContext {
@@ -193,6 +202,12 @@ impl AgentLoop {
                     generation,
                 };
 
+                info!(
+                    "round {round}: dispatching {} tool(s): {:?}",
+                    round_resp.tool_uses.len(),
+                    round_resp.tool_uses.iter().map(|t| t.name.as_str()).collect::<Vec<_>>()
+                );
+
                 let tool_results = crate::agent::rounds::dispatch_round(
                     &tools,
                     &host,
@@ -200,6 +215,11 @@ impl AgentLoop {
                     &round_resp.tool_uses,
                 )
                 .await;
+
+                info!(
+                    "round {round}: dispatch done, results={}",
+                    tool_results.len()
+                );
 
                 // 把 assistant tool_use + user tool_result 推回 history
                 Self::append_tool_round_to_history(
@@ -222,8 +242,13 @@ impl AgentLoop {
                     &api_msgs,
                 );
 
-                // 如果本轮 LLM 没产出纯文本，但所有 tool 都是 terminal → 也算结束
-                if round_resp.text.is_empty() && round_resp.stop_reason.as_deref() == Some("end_turn") {
+                // OpenAI stop_reason="tool_calls" 时继续下一轮；
+                // stop_reason="stop" 且无 tool_use → 上面 else 分支 break。
+                // 这里只在 LLM 既没输出文本又没调工具时退出（异常情况）。
+                if round_resp.text.is_empty()
+                    && round_resp.tool_uses.is_empty()
+                {
+                    warn!("round {round}: empty response (no text, no tool_use), breaking");
                     break;
                 }
                 continue; // 进入下一轮
@@ -242,10 +267,7 @@ impl AgentLoop {
         // 7. 把 final assistant 文本推回 history
         if !final_text.is_empty() {
             let mut history = self.history.lock().await;
-            history.push(Message {
-                role: "assistant".into(),
-                content: final_text.clone(),
-            });
+            history.push(Message::text("assistant", &final_text));
         }
 
         let result = AgentRunResult {
@@ -285,13 +307,19 @@ impl AgentLoop {
             match chunk_res {
                 Ok(chunk) => match chunk {
                     StreamChunk::Text(delta) => {
+                        debug!(
+                            "SSE text delta: len={}, content={:?}",
+                            delta.len(),
+                            if delta.len() > 80 { &delta[..80] } else { &delta }
+                        );
                         text.push_str(&delta);
                         host.emit_stream_delta(run_id, message_id, &delta, None);
                     }
                     StreamChunk::ToolUseStart { id, name } => {
+                        info!("SSE tool_use start: id={}, name={}", id, name);
                         tool_uses.push(ToolUseBlock {
-                            id,
-                            name,
+                            id: id.clone(),
+                            name: name.clone(),
                             input: serde_json::Value::Null,
                             input_raw: String::new(),
                         });
@@ -320,22 +348,46 @@ impl AgentLoop {
                         all_records.push(record);
                     }
                     StreamChunk::ToolUseInputDelta(delta) => {
+                        // 只在 debug 级别打，避免参数太大刷屏
                         if let Some(idx) = current_tool {
+                            debug!(
+                                "SSE tool_use input delta: tool_idx={}, delta_len={}, raw_so_far={}",
+                                idx,
+                                delta.len(),
+                                tool_uses[idx].input_raw.len() + delta.len()
+                            );
                             tool_uses[idx].input_raw.push_str(&delta);
+                        } else {
+                            warn!("SSE tool_use input delta but no current_tool (delta_len={})", delta.len());
                         }
                     }
                     StreamChunk::ToolUseEnd => {
-                        // 解析累积的 raw JSON 成 Value
-                        if let Some(idx) = current_tool.take() {
-                            if !tool_uses[idx].input_raw.is_empty() {
-                                match serde_json::from_str(&tool_uses[idx].input_raw) {
-                                    Ok(v) => tool_uses[idx].input = v,
-                                    Err(e) => warn!("tool_use input parse failed: {e}"),
+                        info!("SSE tool_use end: parsing {} accumulated tool_use(s)", tool_uses.len());
+                        // OpenAI 对所有 tool_calls 只 emit 一个 ToolUseEnd。
+                        // 解析所有已累积 input_raw 但还没 parse 的 tool_use。
+                        current_tool = None;
+                        for (i, tu) in tool_uses.iter_mut().enumerate() {
+                            if tu.input.is_null() && !tu.input_raw.is_empty() {
+                                match serde_json::from_str(&tu.input_raw) {
+                                    Ok(v) => {
+                                        info!(
+                                            "tool_use[{}] parsed: id={}, name={}, input={}",
+                                            i, tu.id, tu.name, v
+                                        );
+                                        tu.input = v;
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "tool_use[{}] input parse failed: id={}, name={}, raw={:?}, err={}",
+                                            i, tu.id, tu.name, tu.input_raw, e
+                                        );
+                                    }
                                 }
                             }
                         }
                     }
                     StreamChunk::Done { stop_reason: sr } => {
+                        info!("SSE done: stop_reason={:?}", sr);
                         stop_reason = sr;
                         break;
                     }
@@ -354,55 +406,47 @@ impl AgentLoop {
         }
     }
 
-    /// 把 tool_use + tool_result 追加到 history（Anthropic multi-block 格式）。
+    /// 把 tool_use + tool_result 追加到 history（OpenAI chat completions 格式）。
+    ///
+    /// OpenAI 格式：
+    /// - assistant message: `{"role":"assistant","content":null,"tool_calls":[...]}`
+    /// - 每个 tool_result 是独立的 tool message:
+    ///   `{"role":"tool","tool_call_id":"...","content":"..."}`
     async fn append_tool_round_to_history(
         history: &Mutex<Vec<Message>>,
         tool_uses: &[ToolUseBlock],
         tool_results: &[crate::agent::rounds::ToolResultBlock],
     ) {
-        // 1. assistant message: text? + tool_use blocks
-        let assistant_content: Vec<serde_json::Value> = tool_uses
-            .iter()
-            .map(|tu| {
-                serde_json::json!({
-                    "type": "tool_use",
-                    "id": tu.id,
-                    "name": tu.name,
-                    "input": tu.input,
-                })
-            })
-            .collect();
+        use crate::agent::{OpenAiFunction, OpenAiToolCall};
 
         let mut history = history.lock().await;
-        history.push(Message {
-            role: "assistant".into(),
-            content: serde_json::to_string(&assistant_content).unwrap_or_default(),
-        });
 
-        // 2. user message: tool_result blocks
-        let user_content: Vec<serde_json::Value> = tool_results
+        // 1. assistant message with tool_calls
+        let tool_calls: Vec<OpenAiToolCall> = tool_uses
             .iter()
-            .map(|tr| {
-                let body = match &tr.kind {
-                    crate::agent::rounds::ToolResultKind::Success { content } => content.clone(),
-                    crate::agent::rounds::ToolResultKind::Error { message } => message.clone(),
-                    crate::agent::rounds::ToolResultKind::Denied { reason } => {
-                        format!("permission denied: {reason}")
-                    }
-                };
-                serde_json::json!({
-                    "type": "tool_result",
-                    "tool_use_id": tr.tool_use_id,
-                    "content": body,
-                    "is_error": matches!(tr.kind, crate::agent::rounds::ToolResultKind::Error { .. }),
-                })
+            .map(|tu| OpenAiToolCall {
+                id: tu.id.clone(),
+                call_type: "function".into(),
+                function: OpenAiFunction {
+                    name: tu.name.clone(),
+                    // OpenAI 要求 arguments 是 JSON 字符串
+                    arguments: serde_json::to_string(&tu.input).unwrap_or_else(|_| "{}".into()),
+                },
             })
             .collect();
+        history.push(Message::assistant_tool_calls(tool_calls));
 
-        history.push(Message {
-            role: "user".into(),
-            content: serde_json::to_string(&user_content).unwrap_or_default(),
-        });
+        // 2. 每个 tool_result 是独立的 tool message
+        for tr in tool_results {
+            let body = match &tr.kind {
+                crate::agent::rounds::ToolResultKind::Success { content } => content.clone(),
+                crate::agent::rounds::ToolResultKind::Error { message } => message.clone(),
+                crate::agent::rounds::ToolResultKind::Denied { reason } => {
+                    format!("permission denied: {reason}")
+                }
+            };
+            history.push(Message::tool_result(&tr.tool_use_id, body));
+        }
     }
 
     async fn emit_error_and_stop(
@@ -446,7 +490,8 @@ impl AgentLoop {
     }
 }
 
-/// 构造 tool round 的 API 消息（部分持久化用，host 拿到后 emit `agent:partial_assistant`）。
+/// 构造 tool round 的 API 消息（OpenAI 格式，部分持久化用，
+/// host 拿到后 emit `agent:partial_assistant`）。
 fn build_tool_round_api_messages(
     text: &str,
     tool_uses: &[ToolUseBlock],
@@ -456,37 +501,38 @@ fn build_tool_round_api_messages(
     if !text.is_empty() {
         out.push(serde_json::json!({
             "role": "assistant",
-            "content": [{ "type": "text", "text": text }],
+            "content": text,
         }));
     }
     if !tool_uses.is_empty() {
+        // assistant message with tool_calls (OpenAI format)
         out.push(serde_json::json!({
             "role": "assistant",
-            "content": tool_uses.iter().map(|tu| serde_json::json!({
-                "type": "tool_use",
+            "content": null,
+            "tool_calls": tool_uses.iter().map(|tu| serde_json::json!({
                 "id": tu.id,
-                "name": tu.name,
-                "input": tu.input,
+                "type": "function",
+                "function": {
+                    "name": tu.name,
+                    "arguments": serde_json::to_string(&tu.input).unwrap_or_else(|_| "{}".into()),
+                },
             })).collect::<Vec<_>>(),
         }));
-        out.push(serde_json::json!({
-            "role": "user",
-            "content": tool_results.iter().map(|tr| {
-                let body = match &tr.kind {
-                    crate::agent::rounds::ToolResultKind::Success { content } => content.clone(),
-                    crate::agent::rounds::ToolResultKind::Error { message } => message.clone(),
-                    crate::agent::rounds::ToolResultKind::Denied { reason } => {
-                        format!("permission denied: {reason}")
-                    }
-                };
-                serde_json::json!({
-                    "type": "tool_result",
-                    "tool_use_id": tr.tool_use_id,
-                    "content": body,
-                    "is_error": matches!(tr.kind, crate::agent::rounds::ToolResultKind::Error { .. }),
-                })
-            }).collect::<Vec<_>>(),
-        }));
+        // each tool_result as a separate tool message (OpenAI format)
+        for tr in tool_results {
+            let body = match &tr.kind {
+                crate::agent::rounds::ToolResultKind::Success { content } => content.clone(),
+                crate::agent::rounds::ToolResultKind::Error { message } => message.clone(),
+                crate::agent::rounds::ToolResultKind::Denied { reason } => {
+                    format!("permission denied: {reason}")
+                }
+            };
+            out.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": tr.tool_use_id,
+                "content": body,
+            }));
+        }
     }
     out
 }

@@ -30,7 +30,11 @@ impl Default for AgentRunConfig {
                 Use the provided tools (read_file, write_file, edit_file, run_command, \
                 bash_output, kill_background, glob_files, search_files, list_dir, ask_user) \
                 to inspect and modify the project. Always prefer read_file over write_file \
-                when you only need to view content."
+                when you only need to view content. \
+                IMPORTANT: When you want to call a tool, use the tool_use mechanism directly. \
+                NEVER output tool calls as JSON text — the system will not parse text-form \
+                tool calls. Prefer relative paths over absolute paths for file operations \
+                and shell commands (e.g. use 'rm -rf ./test' not 'rm -rf /Users/.../test')."
                 .into(),
             max_parallel_tool_calls_per_round: 8,
         }

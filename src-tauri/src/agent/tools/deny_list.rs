@@ -3,13 +3,20 @@
 //! 设计参考 Kivio `native_tools/shell.rs:18-30` 的 `COMMAND_DENYLIST`，
 //! 砍掉了他独有的一些 pattern（himalaya 邮件），增加通用 shell 危险命令。
 
+use regex::Regex;
+use std::sync::OnceLock;
+
 /// 命中即拒的危险命令（前缀匹配，大小写不敏感）。
 ///
 /// 命中后返回 `Err("command blocked by safety policy")`，
 /// loop 转 `agent:tool_rejected` 事件。
+///
+/// 注意：`rm -rf /` 这一条用 regex 精确匹配（见 `is_denied`），
+/// 只 block 根目录 `/` 或 `/*`，不 block 子目录 `/Users/foo`。
+/// 子目录的 rm -rf 应该走 approval 流程，而不是 deny list。
 pub const COMMAND_DENYLIST: &[&str] = &[
     "sudo ",
-    "rm -rf /",
+    "rm -rf /", // 特殊处理：regex 匹配 root only
     "rm -rf /*",
     ":(){ :|:& };:",
     ":(){:|:&};:",
@@ -37,8 +44,21 @@ pub const HOST_PYTHON_PACKAGE_INSTALL_PATTERNS: &[&str] = &[
 /// 检查 command 是否命中 deny list（大小写不敏感）。
 pub fn is_denied(command: &str) -> Option<&'static str> {
     let lowered = command.to_ascii_lowercase();
+
+    // rm -rf / 特殊处理：用 regex 只匹配根目录（/ 后跟空白/行尾/*），
+    // 避免 rm -rf /Users/foo/test 这类合法子目录操作被误伤。
+    static RM_RF_ROOT: OnceLock<Regex> = OnceLock::new();
+    let re = RM_RF_ROOT.get_or_init(|| {
+        // (^|\s) 允许 sudo 前缀；/(?:\s|$|\*) 限定 root 或 /*
+        Regex::new(r"(^|\s)rm\s+-rf\s+/(?:\s|$|\*)").expect("deny list regex")
+    });
+    if re.is_match(&lowered) {
+        return Some("rm -rf /");
+    }
+
     COMMAND_DENYLIST
         .iter()
+        .filter(|p| **p != "rm -rf /" && **p != "rm -rf /*")
         .find(|denied| lowered.contains(*denied))
         .copied()
 }
@@ -58,8 +78,17 @@ mod tests {
     #[test]
     fn blocks_rm_rf_root() {
         assert!(is_denied("rm -rf /").is_some());
-        assert!(is_denied("sudo rm -rf /tmp").is_some()); // sudo 也命中
+        assert!(is_denied("sudo rm -rf /").is_some()); // sudo + root
         assert!(is_denied("RM -RF /").is_some()); // case insensitive
+        assert!(is_denied("rm -rf /*").is_some()); // root with glob
+    }
+
+    #[test]
+    fn allows_rm_rf_subdirectory() {
+        // 子目录不该被 deny list 拦 —— 走 approval 流程
+        // （sudo 仍然被 sudo 那条规则 block，这里只测 rm -rf 子目录）
+        assert!(is_denied("rm -rf /Users/foo/test").is_none());
+        assert!(is_denied("rm -rf /tmp/build").is_none());
     }
 
     #[test]

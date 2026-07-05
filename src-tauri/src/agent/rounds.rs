@@ -17,6 +17,7 @@ use crate::agent::types::ToolUseBlock;
 use crate::agent::host_impl::emit_tool_rejected;
 use serde::Serialize;
 use tauri::AppHandle;
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -41,13 +42,35 @@ pub async fn dispatch_round(
     ctx: &ToolContext,
     tool_uses: &[ToolUseBlock],
 ) -> Vec<ToolResultBlock> {
+    info!(
+        "dispatch_round start: round={}, tool_use_count={}",
+        ctx.round,
+        tool_uses.len()
+    );
     let mut results = Vec::with_capacity(tool_uses.len());
 
-    for tool_use in tool_uses {
+    for (i, tool_use) in tool_uses.iter().enumerate() {
+        info!(
+            "dispatch[{}]: id={}, name={}, input={}",
+            i, tool_use.id, tool_use.name, tool_use.input
+        );
         let result = dispatch_single(tools, host, ctx, tool_use).await;
+        info!(
+            "dispatch[{}] done: id={}, result_kind={}",
+            i,
+            result.tool_use_id,
+            match &result.kind {
+                ToolResultKind::Success { content } => {
+                    format!("Success(len={})", content.len())
+                }
+                ToolResultKind::Error { message } => format!("Error({})", message),
+                ToolResultKind::Denied { reason } => format!("Denied({})", reason),
+            }
+        );
         results.push(result);
     }
 
+    info!("dispatch_round end: round={}, results={}", ctx.round, results.len());
     results
 }
 
@@ -62,8 +85,17 @@ async fn dispatch_single(
 
     // 1. 查找工具
     let tool = match tools.by_name(&tool_name) {
-        Some(t) => t,
+        Some(t) => {
+            debug!(
+                "tool lookup: name={} found, sensitive={}, destructive={}",
+                tool_name,
+                t.is_sensitive(),
+                t.is_destructive()
+            );
+            t
+        }
         None => {
+            warn!("tool lookup failed: unknown tool {}", tool_name);
             let reason = format!("unknown tool: {tool_name}");
             emit_rejected(host, ctx, &tool_call_id, &tool_name, &reason);
             return ToolResultBlock {
@@ -75,6 +107,12 @@ async fn dispatch_single(
 
     // 2. approval gate（sensitive 或 destructive 都走）
     if tool.is_sensitive() || tool.is_destructive() {
+        info!(
+            "tool {} requires approval (sensitive={}, destructive={})",
+            tool_name,
+            tool.is_sensitive(),
+            tool.is_destructive()
+        );
         let mut record = ToolCallRecord {
             id: tool_call_id.clone(),
             name: tool_name.clone(),
@@ -96,9 +134,18 @@ async fn dispatch_single(
 
         let mut sub_ctx = ctx.clone();
         sub_ctx.tool_call_id = tool_call_id.clone();
+        info!("requesting approval for tool {} (id={})", tool_name, tool_call_id);
+        let approval_started = std::time::Instant::now();
         let approved = host.request_tool_approval(&sub_ctx, &record).await;
+        info!(
+            "approval response for tool {}: approved={}, waited_ms={}",
+            tool_name,
+            approved,
+            approval_started.elapsed().as_millis()
+        );
 
         if !approved {
+            warn!("tool {} approval denied by user", tool_name);
             record.status = ToolCallStatus::Cancelled;
             record.error = Some("user denied approval".into());
             record.completed_at = Some(chrono::Utc::now().timestamp());
@@ -120,11 +167,28 @@ async fn dispatch_single(
     let tool_name_for_record = tool_name.clone();
 
     let started = chrono::Utc::now().timestamp();
+    info!(
+        "executing tool {}: id={}, args={}",
+        tool_name_for_record, tool_call_id, args
+    );
     let execute_result = tool.execute(args, &sub_ctx).await;
     let duration_ms = (chrono::Utc::now().timestamp() - started).max(0) as u64;
+    info!(
+        "tool {} executed: duration_ms={}, result_ok={}",
+        tool_name_for_record,
+        duration_ms,
+        execute_result.is_ok()
+    );
 
     match execute_result {
         Ok(output) => {
+            debug!(
+                "tool {} output: content_len={}, structured={:?}, artifacts={}",
+                tool_name_for_record,
+                output.content.len(),
+                output.structured.is_some(),
+                output.artifacts.len()
+            );
             // emit Success 记录
             let preview = if output.content.len() > 200 {
                 format!("{}…", &output.content[..200])
@@ -158,6 +222,10 @@ async fn dispatch_single(
             }
         }
         Err(e) => {
+            warn!(
+                "tool {} failed: error={:?}",
+                tool_name_for_record, e
+            );
             // 区分：Denied 是 permission 类，Error 是执行失败类
             let (kind_label, msg) = match &e {
                 crate::agent::tools::ToolError::Denied(reason) => {
