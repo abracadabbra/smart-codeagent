@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useChatStore } from "@/stores/chatStore";
 import { useAgentStore } from "@/stores/agentStore";
+import { initMcpStore, useMcpStore } from "@/stores/mcpStore";
 import type { AskUserAnswer } from "@/types/tool";
 import {
   AgentApprovalRequestPayload,
@@ -27,6 +28,7 @@ import {
   EVT_TOOL_REJECTED,
   EVT_TOOL_RECORD,
 } from "@/types/event";
+import { EVT_MCP_SERVER_STATE, type McpServerStatePayload } from "@/types/mcp";
 
 // 监听 Rust Agent 推送到前端的所有事件，并把事件映射到 Zustand stores。
 
@@ -151,7 +153,19 @@ export function useAgentEvents() {
               // Phase 2 stub：内存态 agent loop 不需要 persist
             },
           ],
+
+          // Phase 3.1: MCP server 状态事件
+          [
+            EVT_MCP_SERVER_STATE,
+            (e) => {
+              const p = e.payload as McpServerStatePayload;
+              useMcpStore.getState().setState(p.serverId, p.state);
+            },
+          ],
         ];
+
+        // Phase 3.1: 启动时拉取一次 MCP server 列表 + 状态快照
+        void initMcpStore();
 
         // 逐个订阅，注册一个 push 一个，这样 cleanup 时即使 async 还没全跑完
         // 也能取消已注册的；用 cancelled flag 防止 StrictMode 双订阅。

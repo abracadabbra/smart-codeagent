@@ -2,9 +2,10 @@ import { ChatView } from "@/components/chat/ChatView";
 import { AgentEventBridge } from "@/components/AgentEventBridge";
 import { PreviewPane } from "@/components/PreviewPane";
 import { ApprovalDialog } from "@/components/chat/ApprovalDialog";
+import { StatusBar } from "@/components/StatusBar";
 
 /**
- * 三栏布局（左 Session 占位 / 中 对话 / 右 工具预览） + 顶部标题栏。
+ * 三栏布局（左 Session 占位 / 中 对话 / 右 工具预览） + 顶部标题栏 + 底部 MCP 状态栏。
  * ApprovalDialog 由 store 中的 approvalRequest 触发，挂在 body 顶层 modal。
  */
 export function App() {
@@ -36,6 +37,9 @@ export function App() {
         {/* 右侧 工具调用预览 */}
         <PreviewPane />
       </main>
+
+      {/* 底部 MCP 状态栏 — hover 展开完整 server 列表 */}
+      <StatusBar />
 
       {/* 全局 modal：approval_request 触发时显示 */}
       <ApprovalDialog />
