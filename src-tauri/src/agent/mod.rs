@@ -121,6 +121,7 @@ pub mod host;
 pub mod host_impl;
 pub mod loop_;
 pub mod rounds;
+pub mod runner;
 pub mod tools;
 pub mod types;
 

@@ -18,6 +18,7 @@
 //! smart-codeagent 拆分为 `meta.json` + `messages.jsonl` 以支持长会话 append O(1)
 //! 和崩溃恢复（design.md §2.1）。
 
+pub mod commands;
 pub mod storage;
 pub mod store;
 pub mod types;
