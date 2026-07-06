@@ -5,6 +5,7 @@ pub mod config;
 pub mod ipc;
 pub mod mcp;
 pub mod providers;
+pub mod session;
 pub mod settings;
 
 use std::sync::Arc;
