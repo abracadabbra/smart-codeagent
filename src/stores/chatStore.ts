@@ -72,6 +72,11 @@ interface ChatState {
 
   // Lazy loading
   loadMessagesPage: (conversationId: string) => Promise<boolean>;
+
+  // UI: 右侧面板开关
+  previewOpen: boolean;
+  togglePreview: () => void;
+  setPreviewOpen: (open: boolean) => void;
 }
 
 function updateMessageById(
@@ -94,6 +99,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   hasMoreBySession: {},
   oldestIndexBySession: {},
+
+  previewOpen: true,
 
   // ---- Backward-compatible shortcuts ----
 
@@ -400,12 +407,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (existing.length === 0) return {};
       const next = [...existing];
       const last = next[next.length - 1];
-      next[next.length - 1] = {
-        ...last,
-        content: last.content || message,
-        status: "error",
-        error: message,
-      };
+      next[next.length - 1] = { ...last, status: "error", error: message };
       const patch: Partial<ChatState> = {
         messagesBySession: { ...state.messagesBySession, [conversationId]: next },
       };
@@ -419,96 +421,113 @@ export const useChatStore = create<ChatState>((set, get) => ({
   clearSession: (conversationId) => {
     set((state) => {
       const nextMessages = { ...state.messagesBySession };
-      const nextAssistantIds = { ...state.currentAssistantIdBySession };
       const nextRecords = { ...state.toolRecordsBySession };
+      const nextAssistantIds = { ...state.currentAssistantIdBySession };
+      const nextHasMore = { ...state.hasMoreBySession };
+      const nextOldest = { ...state.oldestIndexBySession };
       delete nextMessages[conversationId];
-      delete nextAssistantIds[conversationId];
       delete nextRecords[conversationId];
+      delete nextAssistantIds[conversationId];
+      delete nextHasMore[conversationId];
+      delete nextOldest[conversationId];
       const patch: Partial<ChatState> = {
         messagesBySession: nextMessages,
-        currentAssistantIdBySession: nextAssistantIds,
         toolRecordsBySession: nextRecords,
+        currentAssistantIdBySession: nextAssistantIds,
+        hasMoreBySession: nextHasMore,
+        oldestIndexBySession: nextOldest,
       };
       if (state.activeConversationId === conversationId) {
         patch.messages = [];
-        patch.currentAssistantId = null;
         patch.toolRecordsByRun = {};
+        patch.currentAssistantId = null;
       }
       return patch;
     });
   },
 
+  // Session switching
+
   setActiveConversation: (id) => {
     set((state) => {
-      if (state.activeConversationId === id) return {};
-      const saved: Partial<ChatState> = {
-        activeConversationId: id,
-      };
-      if (state.activeConversationId != null) {
-        saved.messagesBySession = {
-          ...state.messagesBySession,
-          [state.activeConversationId]: state.messages,
-        };
-        saved.currentAssistantIdBySession = {
-          ...state.currentAssistantIdBySession,
-          [state.activeConversationId]: state.currentAssistantId,
-        };
-        saved.toolRecordsBySession = {
-          ...state.toolRecordsBySession,
-          [state.activeConversationId]: state.toolRecordsByRun,
-        };
-      }
-      if (id != null) {
-        saved.messages = state.messagesBySession[id] ?? [];
-        saved.currentAssistantId = state.currentAssistantIdBySession[id] ?? null;
-        saved.toolRecordsByRun = state.toolRecordsBySession[id] ?? {};
+      const patch: Partial<ChatState> = { activeConversationId: id };
+      if (id) {
+        patch.messages = state.messagesBySession[id] ?? [];
+        patch.toolRecordsByRun = state.toolRecordsBySession[id] ?? {};
+        patch.currentAssistantId = state.currentAssistantIdBySession[id] ?? null;
       } else {
-        saved.messages = [];
-        saved.currentAssistantId = null;
-        saved.toolRecordsByRun = {};
+        patch.messages = [];
+        patch.toolRecordsByRun = {};
+        patch.currentAssistantId = null;
       }
-      return saved;
+      return patch;
     });
   },
 
+  // Lazy loading
+
   loadMessagesPage: async (conversationId) => {
-    const { oldestIndexBySession, hasMoreBySession } = get();
-    const oldest = oldestIndexBySession[conversationId] ?? Number.MAX_SAFE_INTEGER;
-    const hasMore = hasMoreBySession[conversationId] ?? true;
-    if (!hasMore) return false;
-
+    const state = get();
+    const oldest = state.oldestIndexBySession[conversationId] ?? Number.MAX_SAFE_INTEGER;
     try {
-      const page = await invoke<{
-        messages: Message[];
-        total: number;
-        hasMore: boolean;
-      }>("get_session_messages", {
-        conversationId,
-        limit: 50,
-        before: oldest < Number.MAX_SAFE_INTEGER ? oldest : null,
-      });
-
-      set((state) => {
-        const existing = state.messagesBySession[conversationId] ?? [];
-        const next = [...page.messages, ...existing];
+      // 后端命令是 get_session_messages（返回 SessionMessagesPage: {messages, total, hasMore}）
+      const page = await invoke<{ messages: Message[]; total: number; hasMore: boolean }>(
+        "get_session_messages",
+        {
+          conversationId,
+          before: oldest === Number.MAX_SAFE_INTEGER ? null : oldest,
+          limit: 50,
+        },
+      );
+      const msgs = page?.messages ?? [];
+      if (msgs.length === 0) {
+        set((s) => ({
+          hasMoreBySession: { ...s.hasMoreBySession, [conversationId]: false },
+        }));
+        return false;
+      }
+      set((s) => {
+        const existing = s.messagesBySession[conversationId] ?? [];
+        const nextMap = new Map<string, Message>();
+        msgs.forEach((m) => nextMap.set(m.id, m));
+        existing.forEach((m) => {
+          if (!nextMap.has(m.id)) nextMap.set(m.id, m);
+        });
+        const next = Array.from(nextMap.values()).sort((a, b) => a.createdAt - b.createdAt);
         const patch: Partial<ChatState> = {
-          messagesBySession: { ...state.messagesBySession, [conversationId]: next },
-          hasMoreBySession: { ...state.hasMoreBySession, [conversationId]: page.hasMore },
+          messagesBySession: { ...s.messagesBySession, [conversationId]: next },
           oldestIndexBySession: {
-            ...state.oldestIndexBySession,
-            [conversationId]: next.length > 0 ? next[0].createdAt : 0,
+            ...s.oldestIndexBySession,
+            [conversationId]: Math.min(...msgs.map((m) => m.createdAt), oldest),
+          },
+          hasMoreBySession: {
+            ...s.hasMoreBySession,
+            [conversationId]: page.hasMore,
           },
         };
-        if (state.activeConversationId === conversationId) {
+        if (s.activeConversationId === conversationId) {
           patch.messages = next;
         }
         return patch;
       });
-      return page.hasMore;
+      return true;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("[chatStore] loadMessagesPage failed:", err);
+      set((s) => ({
+        hasMoreBySession: { ...s.hasMoreBySession, [conversationId]: false },
+      }));
       return false;
     }
+  },
+
+  // UI: 右侧面板开关
+
+  togglePreview: () => {
+    set((state) => ({ previewOpen: !state.previewOpen }));
+  },
+
+  setPreviewOpen: (open) => {
+    set({ previewOpen: open });
   },
 }));

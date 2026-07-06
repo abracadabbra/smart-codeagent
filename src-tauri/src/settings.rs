@@ -37,7 +37,7 @@ pub struct McpSettings {
 /// 对照 Kivio `settings.rs::ChatMcpServer`（line 602-623），砍掉了：
 /// - `url` / `headers`（HTTP transport 才用，Phase 3.1 stdio-only）
 /// - `connector_id` / `auth`（OAuth 连接器，Phase 3.1 不做）
-/// 保留了 `enabled_tools` 白名单语义（空 = 全启用）。
+///   保留了 `enabled_tools` 白名单语义（空 = 全启用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ChatMcpServer {
@@ -176,7 +176,7 @@ mod tests {
         assert_eq!(s.name, "Filesystem");
         assert_eq!(s.command, "npx");
         assert_eq!(s.args.len(), 3);
-        assert_eq!(s.enabled, true, "enabled 默认 true");
+        assert!(s.enabled, "enabled 默认 true");
         assert_eq!(s.transport, "stdio", "transport 默认 stdio");
         assert!(s.env.is_empty());
         assert!(s.cwd.is_none());
@@ -198,7 +198,7 @@ mod tests {
         }"#;
         let s: ChatMcpServer = serde_json::from_str(raw).unwrap();
         assert_eq!(s.id, "github");
-        assert_eq!(s.enabled, false);
+        assert!(!s.enabled);
         assert_eq!(s.env.get("GITHUB_TOKEN").unwrap(), "ghp_xxx");
         assert_eq!(s.cwd.as_deref(), Some("/tmp/work"));
         assert_eq!(s.enabled_tools, vec!["create_issue", "list_issues"]);

@@ -17,8 +17,8 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::agent::host_impl::TauriHost;
 use crate::ipc::commands::{
-    answer_ask_user, approve_tool, cancel_run, list_mcp_server_states, list_mcp_servers,
-    send_message,
+    answer_ask_user, approve_tool, cancel_run, get_session_state, list_mcp_server_states,
+    list_mcp_servers, send_message,
 };
 use crate::mcp::McpManager;
 use crate::session::commands::{
@@ -43,6 +43,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            let handle = app.handle();
+
             // Phase 3.2: AppState（多 session 并行核心）—— 全局单例
             let app_state = Arc::new(AppState::new());
             app.manage(app_state.clone());
@@ -51,14 +53,14 @@ pub fn run() {
             // run_agent_loop 也用同一个实例（否则 oneshot sender 永远等不到 command 解析）。
             // Phase 3.2：TauriHost 持有 AppState 的 Arc 引用，用于 per-conv pending 路由。
             let host: Arc<TauriHost> = Arc::new(TauriHost::new(
-                app.handle().clone(),
+                handle.clone(),
                 app_state.clone(),
             ));
             app.manage(host);
 
             // Phase 3.2: SessionStore（内存缓存 + 写穿磁盘）—— 全局单例
             // 启动时 load_index 把所有会话 meta 灌入内存缓存（messages 懒加载）
-            let session_store = Arc::new(SessionStore::from_app(&app.handle())?);
+            let session_store = Arc::new(SessionStore::from_app(handle)?);
             {
                 let store_clone = session_store.clone();
                 tauri::async_runtime::block_on(async move {
@@ -70,11 +72,11 @@ pub fn run() {
             app.manage(session_store.clone());
 
             // Phase 3.1: 冷加载 settings.json + 构造 McpManager（懒连接，首次 list_tools 时才握手）
-            let mut settings = Settings::load_from_disk(&app.handle());
+            let mut settings = Settings::load_from_disk(handle);
             settings.sanitize();
             app.manage(Arc::new(Mutex::new(settings)));
 
-            let mcp_manager = Arc::new(McpManager::new(app.handle().clone()));
+            let mcp_manager = Arc::new(McpManager::new(handle.clone()));
             app.manage(mcp_manager);
             Ok(())
         })
@@ -84,6 +86,7 @@ pub fn run() {
             approve_tool,
             answer_ask_user,
             cancel_run,
+            get_session_state,
             // Phase 3.1 MCP 命令
             list_mcp_servers,
             list_mcp_server_states,

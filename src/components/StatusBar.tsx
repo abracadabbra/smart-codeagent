@@ -31,7 +31,7 @@ function stateColor(state: McpServerState | undefined): string {
       return "text-red-400";
     case "disconnected":
     default:
-      return "text-ink-400";
+      return "text-ink-500";
   }
 }
 
@@ -45,7 +45,7 @@ function stateDot(state: McpServerState | undefined): string {
       return "bg-red-400";
     case "disconnected":
     default:
-      return "bg-ink-500";
+      return "bg-ink-600";
   }
 }
 
@@ -62,8 +62,8 @@ export function StatusBar() {
   ).length;
 
   return (
-    <footer className="h-6 shrink-0 border-t border-ink-700 bg-ink-800/50 flex items-center px-3 text-xs text-ink-300 gap-2 group relative">
-      <span className="font-medium text-ink-200">MCP</span>
+    <footer className="h-7 shrink-0 border-t border-ink-800/60 bg-ink-900/50 flex items-center px-3 text-[11px] text-ink-400 gap-2 group relative">
+      <span className="font-semibold text-ink-300">MCP</span>
       {enabledServers.length === 0 ? (
         <span className="text-ink-500">No MCP servers</span>
       ) : (
@@ -78,7 +78,7 @@ export function StatusBar() {
 
       {/* hover 展开列表 */}
       {enabledServers.length > 0 && (
-        <div className="hidden group-hover:block absolute bottom-full left-2 mb-1 bg-ink-800 border border-ink-600 rounded-md shadow-lg p-1 min-w-[260px] max-w-[400px] z-50">
+        <div className="hidden group-hover:block absolute bottom-full left-2 mb-1 bg-ink-900 border border-ink-700 rounded-lg shadow-xl p-1.5 min-w-[260px] max-w-[400px] z-50">
           {enabledServers.map((s) => {
             const state = states[s.id];
             return (
@@ -90,7 +90,7 @@ export function StatusBar() {
                   <span
                     className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${stateDot(state)}`}
                   />
-                  <span className="text-ink-100 truncate">{s.name}</span>
+                  <span className="text-ink-200 truncate">{s.name}</span>
                 </div>
                 <span className={`shrink-0 ${stateColor(state)}`}>
                   {stateLabel(state)}

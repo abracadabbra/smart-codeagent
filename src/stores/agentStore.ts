@@ -177,9 +177,11 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     if (!req) return;
     try {
       await invoke("approve_tool", {
-        conversationId,
-        approvalId: req.approvalId,
-        allow,
+        args: {
+          conversationId,
+          approvalId: req.approvalId,
+          allow,
+        },
       } as Record<string, unknown>);
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -193,9 +195,11 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     if (!prompt) return;
     try {
       await invoke("answer_ask_user", {
-        conversationId,
-        askUserId: prompt.askUserId,
-        response,
+        args: {
+          conversationId,
+          askUserId: prompt.askUserId,
+          response,
+        },
       } as Record<string, unknown>);
     } catch (err) {
       // eslint-disable-next-line no-console

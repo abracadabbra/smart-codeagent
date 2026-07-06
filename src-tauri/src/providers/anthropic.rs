@@ -25,7 +25,6 @@
 //! - `finish_reason: "tool_calls"` 标志所有 tool_call 结束
 //! - `index` 字段区分并行 tool_calls（0, 1, 2...）
 
-use crate::agent::{OpenAiFunction, OpenAiToolCall};
 use crate::config::AnthropicConfig;
 use crate::providers::{MessagesRequest, Provider, ProviderError, ProviderResult, StreamChunk, TokenStream};
 use async_stream::try_stream;
@@ -355,6 +354,7 @@ fn parse_event(event_text: &str, tool_started: &mut HashMap<u32, bool>) -> Vec<S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::{OpenAiFunction, OpenAiToolCall};
 
     #[test]
     fn parses_text_delta() {

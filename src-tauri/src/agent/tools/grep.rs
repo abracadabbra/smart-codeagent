@@ -3,7 +3,6 @@
 //! 借 Kivio `native_tools/files.rs:1124` 的 `search_files` 形态。
 
 use async_trait::async_trait;
-use regex::Regex;
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -137,7 +136,7 @@ impl Tool for GrepTool {
                 }
             }
 
-            let total = matches.len();
+            let _total = matches.len();
             let text = if matches.is_empty() {
                 "(no matches)".to_string()
             } else {

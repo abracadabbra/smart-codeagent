@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useChatStore } from "@/stores/chatStore";
 import { useAgentStore } from "@/stores/agentStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { initMcpStore, useMcpStore } from "@/stores/mcpStore";
 import type { AskUserAnswer } from "@/types/tool";
 import {
@@ -27,26 +28,25 @@ import {
   EVT_TOKEN,
   EVT_TOOL_REJECTED,
   EVT_TOOL_RECORD,
+  EVT_SESSION_CREATED,
+  EVT_SESSION_UPDATED,
+  EVT_SESSION_DELETED,
+  EVT_SESSION_STATE,
+  type SessionCreatedPayload,
+  type SessionUpdatedPayload,
+  type SessionDeletedPayload,
+  type SessionStatePayload,
 } from "@/types/event";
 import { EVT_MCP_SERVER_STATE, type McpServerStatePayload } from "@/types/mcp";
 
-// 监听 Rust Agent 推送到前端的所有事件，并把事件映射到 Zustand stores。
+// 监听 Rust Agent 推送到前端的所有事件，并按 conversationId 路由到对应 session 的 store。
+//
+// Phase 3.2 变化：
+// - 所有 agent 事件 payload 加 conversationId，按 conv 路由到 chatStore/agentStore/sessionStore
+// - 新增 4 个 session 事件（created/updated/deleted/state）
+// - approval_request 不是 active session 时不弹 modal，只在 SessionItem 上显示红点 badge
 
 export function useAgentEvents() {
-  const appendToken = useChatStore((s) => s.appendToken);
-  const appendStreamDelta = useChatStore((s) => s.appendStreamDelta);
-  const prepareAssistantMessage = useChatStore(
-    (s) => s.prepareAssistantMessage,
-  );
-  const markComplete = useChatStore((s) => s.markComplete);
-  const markError = useChatStore((s) => s.markError);
-  const upsertToolRecord = useChatStore((s) => s.upsertToolRecord);
-  const setAgentState = useAgentStore((s) => s.setState);
-  const setAgentError = useAgentStore((s) => s.setError);
-  const setApprovalRequest = useAgentStore((s) => s.setApprovalRequest);
-  const setAskUserPrompt = useAgentStore((s) => s.setAskUserPrompt);
-  const clearPrompts = useAgentStore((s) => s.clearPrompts);
-
   useEffect(() => {
     let cancelled = false;
     const unlisteners: UnlistenFn[] = [];
@@ -56,35 +56,45 @@ export function useAgentEvents() {
         const handlers: Array<
           [string, (e: { payload: unknown }) => void]
         > = [
-          // Phase 1 legacy
+          // ---- Agent events (按 conversationId 路由到对应 session) ----
+
           [
             EVT_TOKEN,
             (e) => {
               const p = e.payload as AgentTokenPayload;
-              prepareAssistantMessage(p.msgId);
-              appendToken(p.msgId, p.text);
+              const chat = useChatStore.getState();
+              chat.prepareAssistantMessageFor(p.conversationId, p.msgId);
+              chat.appendTokenTo(p.conversationId, p.msgId, p.text);
             },
           ],
           [
             EVT_STATUS,
             (e) => {
               const p = e.payload as AgentStatusPayload;
-              setAgentState(p.state);
+              useAgentStore.getState().setStateFor(p.conversationId, p.state);
+              // 更新 sessionStore 生成中标记
+              const sessionStore = useSessionStore.getState();
+              if (p.state === "Idle") {
+                sessionStore.markGenerating(p.conversationId, false);
+              } else {
+                sessionStore.markGenerating(p.conversationId, true);
+              }
             },
           ],
           [
             EVT_ERROR,
             (e) => {
               const p = e.payload as AgentErrorPayload;
-              setAgentError(p.message);
-              markError(p.msgId, p.message);
+              useAgentStore.getState().setErrorFor(p.conversationId, p.message);
+              useChatStore.getState().markErrorFor(p.conversationId, p.msgId, p.message);
+              useSessionStore.getState().markGenerating(p.conversationId, false);
             },
           ],
           [
             EVT_DONE,
             (e) => {
               const p = e.payload as AgentDonePayload;
-              markComplete(p.msgId);
+              useChatStore.getState().markCompleteFor(p.conversationId, p.msgId);
             },
           ],
 
@@ -93,46 +103,60 @@ export function useAgentEvents() {
             EVT_STREAM_DELTA,
             (e) => {
               const p = e.payload as AgentStreamDeltaPayload;
-              prepareAssistantMessage(p.msgId);
-              appendStreamDelta(p.msgId, p.text);
+              const chat = useChatStore.getState();
+              chat.prepareAssistantMessageFor(p.conversationId, p.msgId);
+              chat.appendStreamDeltaTo(p.conversationId, p.msgId, p.text);
             },
           ],
           [
             EVT_STREAM_DONE,
             (e) => {
               const p = e.payload as AgentStreamDonePayload;
-              markComplete(p.msgId);
+              useChatStore.getState().markCompleteFor(p.conversationId, p.msgId);
             },
           ],
           [
             EVT_TOOL_RECORD,
             (e) => {
               const p = e.payload as AgentToolRecordPayload;
-              upsertToolRecord(p.runId, p.record);
+              useChatStore.getState().upsertToolRecordTo(
+                p.conversationId,
+                p.runId,
+                p.record,
+              );
             },
           ],
           [
             EVT_APPROVAL_REQUEST,
             (e) => {
               const p = e.payload as AgentApprovalRequestPayload;
-              setApprovalRequest(p);
+              const agentStore = useAgentStore.getState();
+              const sessionStore = useSessionStore.getState();
+              const activeId = sessionStore.activeSessionId;
+              // eslint-disable-next-line no-console
+              console.log("[approval_request] conv=", p.conversationId, "active=", activeId, "agentActive=", agentStore.activeConversationId, "tool=", p.toolName);
+              // 注册 pending（分桶）
+              agentStore.setApprovalRequestFor(p.conversationId, p);
+              sessionStore.addPendingApproval(p.conversationId);
+              // active session：确保顶层 approvalRequest 同步以触发 modal
+              if (p.conversationId === activeId) {
+                agentStore.setApprovalRequest(p);
+              }
             },
           ],
           [
             EVT_ASK_USER_PROMPT,
             (e) => {
               const p = e.payload as AgentAskUserPromptPayload;
-              setAskUserPrompt(p);
+              useAgentStore.getState().setAskUserPromptFor(p.conversationId, p);
             },
           ],
           [
             EVT_TOOL_REJECTED,
             (e) => {
               const p = e.payload as AgentToolRejectedPayload;
-              // rejection 在 store 里以 ToolCallRecord 形式落地（Cancelled 状态 + reason）
-              // — 直接通过 appendToolRecord 一致化处理
               const now = Date.now();
-              upsertToolRecord(p.runId, {
+              useChatStore.getState().upsertToolRecordTo(p.conversationId, p.runId, {
                 id: p.toolCallId,
                 name: p.toolName,
                 source: "native",
@@ -150,7 +174,89 @@ export function useAgentEvents() {
           [
             EVT_PARTIAL_ASSISTANT,
             (_e) => {
-              // Phase 2 stub：内存态 agent loop 不需要 persist
+              // Phase 2 stub：JSONL 持久化由后端处理
+            },
+          ],
+
+          // ---- Phase 3.2: Session events ----
+
+          [
+            EVT_SESSION_CREATED,
+            (e) => {
+              const p = e.payload as SessionCreatedPayload;
+              const conv = p.conversation;
+              useSessionStore.setState((state) => {
+                const item = {
+                  id: conv.id,
+                  title: conv.title,
+                  preview: "",
+                  createdAt: conv.createdAt,
+                  updatedAt: conv.updatedAt,
+                  pinned: conv.pinned,
+                  messageCount: conv.messageCount,
+                };
+                if (state.sessions.find((s) => s.id === conv.id)) return {};
+                const next = [...state.sessions, item];
+                next.sort((a, b) => {
+                  if (a.pinned !== b.pinned)
+                    return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+                  return b.updatedAt - a.updatedAt;
+                });
+                return { sessions: next };
+              });
+            },
+          ],
+          [
+            EVT_SESSION_UPDATED,
+            (e) => {
+              const p = e.payload as SessionUpdatedPayload;
+              const conv = p.conversation;
+              useSessionStore.setState((state) => {
+                const next = state.sessions.map((s) =>
+                  s.id === conv.id
+                    ? {
+                        ...s,
+                        title: conv.title,
+                        updatedAt: conv.updatedAt,
+                        pinned: conv.pinned,
+                        messageCount: conv.messageCount,
+                      }
+                    : s,
+                );
+                next.sort((a, b) => {
+                  if (a.pinned !== b.pinned)
+                    return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+                  return b.updatedAt - a.updatedAt;
+                });
+                return { sessions: next };
+              });
+            },
+          ],
+          [
+            EVT_SESSION_DELETED,
+            (e) => {
+              const p = e.payload as SessionDeletedPayload;
+              useSessionStore.setState((state) => {
+                const next = state.sessions.filter((s) => s.id !== p.conversationId);
+                const nextActive =
+                  state.activeSessionId === p.conversationId
+                    ? next.length > 0
+                      ? next[0].id
+                      : null
+                    : state.activeSessionId;
+                return { sessions: next, activeSessionId: nextActive };
+              });
+            },
+          ],
+          [
+            EVT_SESSION_STATE,
+            (e) => {
+              const p = e.payload as SessionStatePayload;
+              useAgentStore.getState().setStateFor(p.conversationId, p.state);
+              useSessionStore.getState().markGenerating(
+                p.conversationId,
+                p.state !== "Idle",
+              );
             },
           ],
 
@@ -188,64 +294,70 @@ export function useAgentEvents() {
     return () => {
       cancelled = true;
       unlisteners.forEach((u) => u());
-      clearPrompts();
     };
-  }, [
-    appendToken,
-    appendStreamDelta,
-    prepareAssistantMessage,
-    markComplete,
-    markError,
-    upsertToolRecord,
-    setAgentState,
-    setAgentError,
-    setApprovalRequest,
-    setAskUserPrompt,
-    clearPrompts,
-  ]);
+  }, []);
 }
 
+// ---- Command helpers ----
+
 export interface SendMessageArgs {
+  conversationId: string;
   text: string;
-  assistantId: string;
   runId: string;
-  generation: number;
+  messageId: string;
 }
 
 /**
- * 发送一条用户消息给后端 Agent Loop。
- * `runId` 前端生成（避免后端重复）；`generation` 是 runId 的递增版本号。
+ * 发送一条用户消息给后端 run_agent_loop。
+ * Phase 3.2: 前端生成 messageId（pending assistant 消息的 id）+ runId，
+ * 后端用 messageId 作为 emit 事件的 msg_id，确保前端能正确路由 stream_delta。
  */
 export async function sendMessage({
+  conversationId,
   text,
-  assistantId,
   runId,
-  generation,
-}: SendMessageArgs) {
-  await invoke("send_message", {
+  messageId,
+}: SendMessageArgs): Promise<{ success: boolean; error?: string }> {
+  return await invoke<{ success: boolean; error?: string }>("send_message", {
+    conversationId,
     text,
-    assistantId,
     runId,
-    generation,
+    messageId,
   });
 }
 
-export async function approveTool(approvalId: string, allow: boolean) {
+export async function approveTool(
+  conversationId: string,
+  approvalId: string,
+  allow: boolean,
+) {
+  // 后端命令签名为 args: ApproveToolArgs，需要包在 args key 下
   await invoke("approve_tool", {
-    args: { approvalId, allow },
+    args: { conversationId, approvalId, allow },
   });
+  // 本地清掉 pending
+  const agentStore = useAgentStore.getState();
+  const sessionStore = useSessionStore.getState();
+  agentStore.setApprovalRequestFor(conversationId, null);
+  sessionStore.removePendingApproval(conversationId);
 }
 
 export async function answerAskUser(
+  conversationId: string,
   askUserId: string,
   phase: string,
   answers: Record<string, AskUserAnswer>,
 ) {
+  // 后端命令签名为 args: AnswerAskUserArgs，需要包在 args key 下
   await invoke("answer_ask_user", {
-    args: { askUserId, response: { phase, answers } },
+    args: {
+      conversationId,
+      askUserId,
+      response: { phase, answers },
+    },
   });
 }
 
-export async function cancelRun(runId: string) {
-  await invoke("cancel_run", { runId });
+export async function cancelRun(conversationId: string) {
+  await invoke("cancel_run", { conversationId });
 }

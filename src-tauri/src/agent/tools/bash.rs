@@ -121,7 +121,7 @@ impl Tool for BashTool {
             let started = std::time::Instant::now();
 
             let future = async {
-                let mut child = Command::new("/bin/sh")
+                let child = Command::new("/bin/sh")
                     .arg("-c")
                     .arg(&args.command)
                     .current_dir(&cwd)

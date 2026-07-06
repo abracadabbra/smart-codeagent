@@ -16,7 +16,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::oneshot;
 

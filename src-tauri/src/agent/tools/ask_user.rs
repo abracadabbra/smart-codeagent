@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::{
-    AskUserAnswer, AskUserPromptPayload, AskUserQuestion, AskUserResponseResult, Tool, ToolContext,
-    ToolError, ToolFuture, ToolOutput,
+    AskUserPromptPayload, AskUserQuestion, AskUserResponseResult, Tool, ToolContext,
+    ToolError, ToolFuture,
 };
 
 pub struct AskUserTool;
@@ -156,6 +156,7 @@ pub fn skipped_response() -> AskUserResponseResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::tools::AskUserAnswer;
     use std::collections::HashMap;
 
     fn ctx() -> ToolContext {

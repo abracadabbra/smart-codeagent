@@ -36,9 +36,12 @@ pub struct SendResult {
 
 /// 用户发消息，启动一轮 Agent Loop。
 ///
-/// Phase 3.2：加 `conversation_id`，后端生成 `message_id` + `generation`，
+/// Phase 3.2：加 `conversation_id`，后端生成 `generation`，
 /// 改用 `run_agent_loop` + `SessionRunner`。立即返回（不阻塞 IPC），
 /// 实际执行由 `tokio::spawn` 后台进行。
+///
+/// `message_id` 由前端生成（前端创建 pending assistant 消息时生成），
+/// 后端用它作为 emit 事件的 msg_id，确保前端能正确路由 stream_delta 到对应消息。
 #[tauri::command]
 pub async fn send_message(
     app: AppHandle,
@@ -47,12 +50,14 @@ pub async fn send_message(
     conversation_id: String,
     text: String,
     run_id: String,
+    message_id: String,
 ) -> Result<SendResult, String> {
     tracing::info!(
-        "send_message invoked: conv={}, text={:?}, run_id={:?}",
+        "send_message invoked: conv={}, text={:?}, run_id={:?}, msg_id={:?}",
         conversation_id,
         text,
-        run_id
+        run_id,
+        message_id
     );
 
     let app_state_arc = app_state.inner().clone();
@@ -70,8 +75,7 @@ pub async fn send_message(
         }
     };
 
-    // 2. 后端生成 message_id + generation
-    let message_id = format!("msg_{}", uuid::Uuid::new_v4());
+    // 2. generation（message_id 由前端传入，用于 emit 事件路由）
     let generation = app_state_arc.new_run_generation(&conversation_id);
 
     // 3. 加载 history + push user 消息（失败时清理 generation + reservation）
@@ -93,6 +97,27 @@ pub async fn send_message(
     if let Err(e) = session.push_user(&session_store_arc, &text).await {
         app_state_arc.end_generation(&conversation_id, generation);
         return Err(e);
+    }
+
+    // 3.5 自动标题：若 title 仍是默认值，用首条消息内容前 N 字符更新
+    if let Ok(meta) = session_store_arc.get_meta(&conversation_id).await {
+        if meta.title == "New Session" {
+            let auto_title: String = text
+                .trim()
+                .chars()
+                .take(40)
+                .collect::<String>()
+                .trim()
+                .to_string();
+            if !auto_title.is_empty() {
+                if let Ok(updated) = session_store_arc
+                    .update_meta(&conversation_id, Some(&auto_title), None)
+                    .await
+                {
+                    crate::ipc::events::emit_session_updated(Some(&app), &updated);
+                }
+            }
+        }
     }
 
     // 4. 获取 host + config + settings + mcp_manager
@@ -206,6 +231,17 @@ pub async fn cancel_run(
 ) -> Result<(), String> {
     app_state.cancel_chat_generation(&conversation_id);
     Ok(())
+}
+
+/// 查询某个会话当前的 AgentState（前端用于启动时/会话切换时同步真实状态）。
+///
+/// 安全网：防止前端因 HMR 或事件丢失导致状态卡在非 Idle。
+#[tauri::command]
+pub async fn get_session_state(
+    app_state: State<'_, Arc<AppState>>,
+    conversation_id: String,
+) -> Result<String, String> {
+    Ok(app_state.get_session_state(&conversation_id).as_str().to_string())
 }
 
 /// 列出 settings.json 中配置的所有 MCP server（前端 StatusBar / 设置面板用）。

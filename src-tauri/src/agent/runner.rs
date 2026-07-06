@@ -183,11 +183,6 @@ pub async fn run_agent_loop(
     // 3. 合并 MCP tools（Phase 3.1）
     if let Some(mcp_mgr) = mcp_manager {
         let mcp_defs = mcp_mgr.list_all_tools(settings).await;
-        info!(
-            "merged {} MCP tool(s) into tool_defs (total={})",
-            mcp_defs.len(),
-            tool_defs.len() + mcp_defs.len()
-        );
         tool_defs.extend(mcp_defs);
     }
 
@@ -403,9 +398,10 @@ pub async fn run_agent_loop(
 /// 从 `AgentLoop::consume_stream` 迁移，逻辑不变。
 ///
 /// Phase 3.2：加 `conversation_id` 参数，传给 host emit 方法（per-conv 路由）。
+#[allow(clippy::too_many_arguments)]
 async fn consume_stream(
     stream: &mut crate::providers::TokenStream,
-    app: &Option<AppHandle>,
+    _app: &Option<AppHandle>,
     conversation_id: &str,
     run_id: &str,
     message_id: &str,
@@ -417,7 +413,6 @@ async fn consume_stream(
     let mut tool_uses: Vec<ToolUseBlock> = Vec::new();
     let mut stop_reason: Option<String> = None;
     let mut current_tool: Option<usize> = None;
-    let mut started_at = chrono::Utc::now().timestamp();
 
     while let Some(chunk_res) = stream.next().await {
         match chunk_res {
@@ -440,7 +435,7 @@ async fn consume_stream(
                         input_raw: String::new(),
                     });
                     current_tool = Some(tool_uses.len() - 1);
-                    started_at = chrono::Utc::now().timestamp();
+                    let started_at = chrono::Utc::now().timestamp();
 
                     let record = ToolCallRecord {
                         id: tool_uses.last().unwrap().id.clone(),

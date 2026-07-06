@@ -424,35 +424,30 @@ fn spawn_stdio(
     let reader_pending = pending.clone();
     let reader_task = tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    let value: Value = match serde_json::from_str(&line) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    // 无 id 的通知 / 进度消息：忽略。
-                    let Some(id) = value.get("id").and_then(|id| id.as_u64()) else {
-                        continue;
-                    };
-                    let sender = {
-                        let mut pending = reader_pending.lock().await;
-                        pending.remove(&id)
-                    };
-                    if let Some(sender) = sender {
-                        let outcome = if let Some(error) = value.get("error") {
-                            Err(format!("MCP error: {}", compact_json(error, 500)))
-                        } else {
-                            Ok(value.get("result").cloned().unwrap_or(Value::Null))
-                        };
-                        let _ = sender.send(outcome);
-                    }
-                }
-                // EOF 或读错误 → 子进程关闭 stdout，结束 reader；在途请求的 oneshot
-                // 在此被丢弃，request 侧收到 RecvError 报 "closed stdout"。
-                Ok(None) | Err(_) => break,
+        while let Ok(Some(line)) = lines.next_line().await {
+            let value: Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            // 无 id 的通知 / 进度消息：忽略。
+            let Some(id) = value.get("id").and_then(|id| id.as_u64()) else {
+                continue;
+            };
+            let sender = {
+                let mut pending = reader_pending.lock().await;
+                pending.remove(&id)
+            };
+            if let Some(sender) = sender {
+                let outcome = if let Some(error) = value.get("error") {
+                    Err(format!("MCP error: {}", compact_json(error, 500)))
+                } else {
+                    Ok(value.get("result").cloned().unwrap_or(Value::Null))
+                };
+                let _ = sender.send(outcome);
             }
         }
+        // EOF 或读错误 → 子进程关闭 stdout，结束 reader；在途请求的 oneshot
+        // 在此被丢弃，request 侧收到 RecvError 报 "closed stdout"。
     });
 
     // stderr task：把 stderr 尾巴收进环形缓冲（最多 STDERR_TAIL_LINES 行）。

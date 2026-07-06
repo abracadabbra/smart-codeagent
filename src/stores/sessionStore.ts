@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { Conversation, ConversationListItem } from "@/types/session";
+import type { AgentState } from "@/types/agent";
+import { useChatStore } from "./chatStore";
+import { useAgentStore } from "./agentStore";
 
 interface SessionState {
   sessions: ConversationListItem[];
@@ -31,7 +34,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   loadSessions: async () => {
     try {
       const items = await invoke<ConversationListItem[]>("list_sessions");
-      set({ sessions: items });
+      const { activeSessionId } = get();
+      const nextActive = activeSessionId ?? (items.length > 0 ? items[0].id : null);
+      set({ sessions: items, activeSessionId: nextActive });
+      if (nextActive) {
+        useChatStore.getState().setActiveConversation(nextActive);
+        useAgentStore.getState().setActiveConversation(nextActive);
+        // 加载首个会话的历史消息
+        const chat = useChatStore.getState();
+        const cached = chat.messagesBySession[nextActive];
+        if (!cached || cached.length === 0) {
+          void chat.loadMessagesPage(nextActive);
+        }
+        // 安全网：从后端同步真实 agent 状态，防止前端状态卡死
+        try {
+          const realState = await invoke<string>("get_session_state", {
+            conversationId: nextActive,
+          });
+          useAgentStore.getState().setStateFor(nextActive, realState as AgentState);
+          if (realState === "Idle") {
+            get().markGenerating(nextActive, false);
+          }
+        } catch {
+          // 忽略：旧状态保留
+        }
+      }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("[sessionStore] list_sessions failed:", err);
@@ -40,6 +67,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   selectSession: (id) => {
     set({ activeSessionId: id });
+    useChatStore.getState().setActiveConversation(id);
+    useAgentStore.getState().setActiveConversation(id);
+    // 切换会话时加载历史消息（仅在内存缓存为空时加载）
+    if (id) {
+      const chat = useChatStore.getState();
+      const cached = chat.messagesBySession[id];
+      if (!cached || cached.length === 0) {
+        void chat.loadMessagesPage(id);
+      }
+      // 安全网：切换会话时同步真实状态
+      void (async () => {
+        try {
+          const realState = await invoke<string>("get_session_state", {
+            conversationId: id,
+          });
+          useAgentStore.getState().setStateFor(id, realState as AgentState);
+          if (realState === "Idle") {
+            get().markGenerating(id, false);
+          }
+        } catch {
+          // 忽略
+        }
+      })();
+    }
   },
 
   createSession: async () => {
@@ -62,6 +113,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return b.updatedAt - a.updatedAt;
       });
       set({ sessions: next, activeSessionId: conv.id });
+      useChatStore.getState().setActiveConversation(conv.id);
+      useAgentStore.getState().setActiveConversation(conv.id);
       return conv.id;
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -98,6 +151,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               ? next[0].id
               : null
             : state.activeSessionId;
+        if (nextActive !== state.activeSessionId) {
+          useChatStore.getState().setActiveConversation(nextActive);
+          useAgentStore.getState().setActiveConversation(nextActive);
+        }
         return { sessions: next, activeSessionId: nextActive };
       });
     } catch (err) {

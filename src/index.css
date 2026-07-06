@@ -13,25 +13,118 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overscroll-behavior: none;
+    background: #08080a;
+    color: #e4e4e7;
   }
 
-  /* 滚动条 — 深色主题 */
+  /* macOS Overlay titlebar: leave space for traffic lights */
+  .titlebar-safe {
+    padding-left: 78px;
+  }
+
+  /* Make the whole titlebar region draggable on macOS */
+  [data-tauri-drag-region] {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  [data-tauri-no-drag-region] {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
+  /* Minimal dark scrollbar */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 5px;
+    height: 5px;
   }
   ::-webkit-scrollbar-thumb {
+    background: #27272a;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
     background: #3f3f46;
-    border-radius: 4px;
   }
   ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-corner {
     background: transparent;
   }
 }
 
 @layer utilities {
-  /* 防止滚动穿透 */
   .overflow-y-auto {
     scrollbar-gutter: stable;
+  }
+  .selection-brand::selection {
+    background: rgba(59, 130, 246, 0.3);
+    color: #fafafa;
+  }
+}
+
+/* ── Markdown prose refinements ─────────────────────────────── */
+.markdown-body {
+  /* nested list indentation */
+  ul ul,
+  ol ol,
+  ul ol,
+  ol ul {
+    margin-top: 4px;
+    margin-bottom: 4px;
+  }
+
+  /* tighter list markers */
+  li > p:first-child {
+    margin-top: 0;
+  }
+  li > p:last-child {
+    margin-bottom: 0;
+  }
+
+  /* task list checkboxes (GFM) */
+  input[type="checkbox"] {
+    appearance: none;
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid #52525b;
+    border-radius: 3px;
+    margin-right: 6px;
+    vertical-align: middle;
+    position: relative;
+    top: -1px;
+    cursor: pointer;
+  }
+  input[type="checkbox"]:checked {
+    background: #3b82f6;
+    border-color: #3b82f6;
+  }
+  input[type="checkbox"]:checked::after {
+    content: "";
+    position: absolute;
+    left: 3.5px;
+    top: 1px;
+    width: 4px;
+    height: 7.5px;
+    border: solid white;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+  }
+
+  /* task list: no bullet */
+  li:has(> input[type="checkbox"]) {
+    list-style: none;
+    margin-left: -18px;
+  }
+
+  /* code inside list items */
+  li code {
+    word-break: break-word;
+  }
+
+  /* avoid double margin between consecutive code blocks & paragraphs */
+  p + div[class*="relative"],
+  p + div:has(> [class*="language-"]) {
+    margin-top: 0;
   }
 }

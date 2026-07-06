@@ -37,6 +37,9 @@ yarn-error.log*
 # Tauri build output
 src-tauri/target/
 
+# Tauri dev sessions dir (绕过 ~/Library/Application Support 沙箱限制)
+.tauri-sessions/
+
 # Trellis internal state
 .trellis/.runtime/
 .trellis/.developer

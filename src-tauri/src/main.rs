@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    dotenvy::dotenv().ok();
+    let _ = dotenvy::dotenv();
     smart_codeagent_lib::init_tracing();
     smart_codeagent_lib::run();
 }

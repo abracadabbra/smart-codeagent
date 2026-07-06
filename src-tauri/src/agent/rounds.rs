@@ -205,11 +205,7 @@ async fn dispatch_single(
                 output.artifacts.len()
             );
             // emit Success 记录
-            let preview = if output.content.len() > 200 {
-                format!("{}…", &output.content[..200])
-            } else {
-                output.content.clone()
-            };
+            let preview = truncate_preview(&output.content, 200);
             let record = ToolCallRecord {
                 id: tool_call_id.clone(),
                 name: tool_name_for_record,
@@ -397,11 +393,7 @@ async fn dispatch_mcp(
             } else {
                 res.structured_content.clone()
             };
-            let preview = if res.content.len() > 200 {
-                format!("{}…", &res.content[..200])
-            } else {
-                res.content.clone()
-            };
+            let preview = truncate_preview(&res.content, 200);
             let record = ToolCallRecord {
                 id: tool_call_id.clone(),
                 name: tool_name.clone(),
@@ -498,3 +490,16 @@ pub fn emit_rejected_direct(
 // 反引用 ToolOutput 防止 unused warning
 #[allow(dead_code)]
 fn _unused(_: &ToolOutput) {}
+
+/// 安全截断字符串预览：按字符边界截断，避免 UTF-8 多字节字符中间切片 panic。
+fn truncate_preview(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    // 找到不超过 max_bytes 的最大字符边界
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
+}

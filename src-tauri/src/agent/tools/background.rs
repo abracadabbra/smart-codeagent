@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::{Child, Command};
 
 use super::bash::BashTool;
-use super::{Tool, ToolContext, ToolError, ToolFuture, ToolOutput};
+use super::{ToolError, ToolOutput};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
@@ -288,7 +288,7 @@ fn _ensure_bash_in_scope() -> &'static BashTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::tools::ToolContext;
+    use crate::agent::tools::{Tool, ToolContext};
 
     fn ctx() -> ToolContext {
         ToolContext {

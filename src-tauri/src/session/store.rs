@@ -15,14 +15,12 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 use tokio::sync::RwLock;
 
 use crate::session::storage::{
-    atomic_write, index_path, messages_path, meta_path, session_dir, sessions_dir,
-    validate_conversation_id,
+    atomic_write, validate_conversation_id,
 };
 use crate::session::types::{ChatMessage, Conversation, ConversationListItem, SessionMessagesPage};
 
@@ -59,8 +57,18 @@ impl SessionStore {
         }
     }
 
-    /// 从 AppHandle 构造（自动定位 `<app_data_dir>/sessions/`）。
+    /// 从 AppHandle 构造。
+    ///
+    /// 路径优先级：
+    /// 1. 环境变量 `SMARTCODEAGENT_SESSIONS_DIR`（dev 覆盖用，绕过 macOS App Sandbox / TRAE 沙箱）
+    /// 2. `<app_data_dir>/sessions/`（默认，生产路径）
     pub fn from_app(app: &AppHandle) -> Result<Self, String> {
+        if let Ok(custom) = std::env::var("SMARTCODEAGENT_SESSIONS_DIR") {
+            if !custom.is_empty() {
+                let base = std::path::PathBuf::from(custom);
+                return Ok(Self::new(base));
+            }
+        }
         let base = app
             .path()
             .app_data_dir()

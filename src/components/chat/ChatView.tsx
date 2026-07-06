@@ -1,64 +1,137 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { useChatStore } from "@/stores/chatStore";
 import { useAgentStore } from "@/stores/agentStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { MessageBubble } from "./MessageBubble";
 import { InputBar } from "./InputBar";
 
-/**
- * 中间栏：对话流 + 底部输入框。
- * 三栏容器放在 App.tsx，这里只关注中栏自身。
- */
 export function ChatView() {
   const messages = useChatStore((s) => s.messages);
   const agentState = useAgentStore((s) => s.state);
   const lastError = useAgentStore((s) => s.lastError);
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const sessions = useSessionStore((s) => s.sessions);
+
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId) ?? null,
+    [sessions, activeSessionId],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 只在消息数量变化或会话切换时滚动到底部，避免每个 token 都触发滚动
+  const messageCount = messages.length;
+  const lastMessageStatus = messages[messageCount - 1]?.status ?? "";
 
-  // 新消息追加时自动滚到底
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messageCount, activeSessionId]);
+
+  // 流式输出时，只在消息状态变化（如 pending→streaming→complete）时滚动，而非每个 token
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastMessageStatus]);
+
+  const hasMessages = messages.length > 0;
 
   return (
-    <div className="flex flex-col h-full bg-ink-900">
-      {/* 对话区 */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4">
-        {messages.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-ink-300 text-sm">
-            开始对话吧…
+    <div className="flex flex-col h-full bg-ink-950 relative">
+      {/* 对话区：没有消息时显示中央空态 */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto relative">
+        {activeSession && hasMessages ? (
+          <div className="px-6 py-5">
+            {messages.map((m) => (
+              <MessageBubble key={m.id} message={m} />
+            ))}
           </div>
         ) : (
-          messages.map((m) => <MessageBubble key={m.id} message={m} />)
-        )}
+          <div className="absolute inset-0 flex flex-col items-center justify-center px-6 animate-fade-in">
+            {/* 大 Logo / 星球图标 */}
+            <div className="relative mb-8">
+              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-ink-800 to-ink-900 border border-ink-700/80 flex items-center justify-center shadow-2xl">
+                <svg
+                  className="w-9 h-9 text-ink-400"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+                  <path d="M2 12h20" />
+                </svg>
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-accent flex items-center justify-center">
+                <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2a10 10 0 0 1 0 20" />
+                  <path d="M12 2a10 10 0 0 0 0 20" />
+                </svg>
+              </div>
+            </div>
 
-        {lastError && messages.length === 0 && (
-          <div className="text-red-400 text-sm text-center mt-4">{lastError}</div>
+            <h1 className="text-3xl font-semibold text-ink-100 mb-3 tracking-tight">
+              Quest on, hands off
+            </h1>
+
+            <div className="flex items-center gap-3 text-sm text-ink-400 mb-12">
+              <span>运行于</span>
+              <button className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-ink-900 border border-ink-800 hover:border-ink-700 transition-colors">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 2H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z" />
+                </svg>
+                <span className="text-ink-200">smart-codeagent</span>
+                <svg className="w-3 h-3 text-ink-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              <button className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-ink-900 border border-ink-800 hover:border-ink-700 transition-colors">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                  <line x1="8" y1="21" x2="16" y2="21" />
+                  <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+                <span className="text-ink-200">本地模式</span>
+                <svg className="w-3 h-3 text-ink-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+            </div>
+
+            {lastError && (
+              <div className="text-red-400 text-sm text-center mt-4">{lastError}</div>
+            )}
+          </div>
         )}
       </div>
 
-      {/* 状态栏 */}
-      <div className="px-6 py-1 border-t border-ink-700 text-xs text-ink-300 flex items-center gap-2">
-        <span
-          className={[
-            "inline-block w-1.5 h-1.5 rounded-full",
-            agentState === "Idle"
-              ? "bg-ink-400"
-              : agentState === "Stream"
-                ? "bg-blue-500 animate-pulse"
-                : "bg-amber-500",
-          ].join(" ")}
-        />
-        <span>{agentState}</span>
-        {lastError && agentState === "Idle" && (
-          <span className="text-red-400">· {lastError}</span>
-        )}
-      </div>
-
-      {/* 输入框 */}
+      {/* 底部输入卡片 */}
       <InputBar />
+
+      {/* 简洁状态提示 */}
+      {hasMessages && (
+        <div className="absolute top-4 right-4 flex items-center gap-2 text-[11px] text-ink-500">
+          <span
+            className={[
+              "inline-block w-1.5 h-1.5 rounded-full",
+              agentState === "Idle"
+                ? "bg-ink-500"
+                : agentState === "Stream"
+                  ? "bg-brand-500 animate-pulse"
+                  : "bg-amber-500",
+            ].join(" ")}
+          />
+          <span>{agentState}</span>
+        </div>
+      )}
     </div>
   );
 }
