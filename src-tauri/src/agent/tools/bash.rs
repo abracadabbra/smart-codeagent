@@ -179,6 +179,7 @@ mod tests {
 
     fn ctx() -> ToolContext {
         ToolContext {
+            conversation_id: "test".into(),
             run_id: "test".into(),
             message_id: "test".into(),
             tool_call_id: "tc_test".into(),

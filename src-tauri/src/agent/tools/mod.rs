@@ -21,8 +21,12 @@ use std::sync::Arc;
 /// 工具执行上下文：loop 注入，前端不可控。
 ///
 /// 借 Kivio `execute.rs:34-54` 的 `ToolExecutionContext` 形态，砍掉了 sub-agent 字段。
+///
+/// Phase 3.2：加 `conversation_id` 字段，用于 host trait 的 per-conv 路由
+/// （`request_tool_approval` / `request_ask_user` 从 ctx 读 conv_id）。
 #[derive(Debug, Clone)]
 pub struct ToolContext {
+    pub conversation_id: String,
     pub run_id: String,
     pub message_id: String,
     pub tool_call_id: String,

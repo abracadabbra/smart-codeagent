@@ -11,7 +11,7 @@
 //! 但砍掉了 Kivio 的"同会话多模型一问多答 fan-out"（Phase 3.2 每会话同时只有一个 run）。
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::agent::AgentState;
 
@@ -334,24 +334,25 @@ impl Default for AppState {
 /// 哨兵槽位只占 `chat_active_replies`、不参与 generation/取消，
 /// 命令任意退出路径 drop 时释放。
 ///
+/// Phase 3.2：改为 own `Arc<AppState>`（不再 borrow），以便 move 进 `tokio::spawn`。
 /// 用法：
 /// ```ignore
-/// let reservation = match ChatSendReservation::try_acquire(&state, &conv_id) {
+/// let reservation = match ChatSendReservation::try_acquire(app_state.clone(), &conv_id) {
 ///     Some(r) => r,
 ///     None => return Ok(json!({"success": false, "error": "busy"})),
 /// };
-/// // ... spawn run_agent_loop ...
+/// // ... spawn run_agent_loop (move reservation into task) ...
 /// // reservation drop 时自动释放
 /// ```
-pub struct ChatSendReservation<'a> {
-    state: &'a AppState,
+pub struct ChatSendReservation {
+    state: Arc<AppState>,
     conversation_id: String,
     run_id: String,
 }
 
-impl<'a> ChatSendReservation<'a> {
+impl ChatSendReservation {
     /// 尝试预留某会话的发送哨兵。返回 `None` 表示该会话已有 run 在跑（busy）。
-    pub fn try_acquire(state: &'a AppState, conv_id: &str) -> Option<Self> {
+    pub fn try_acquire(state: Arc<AppState>, conv_id: &str) -> Option<Self> {
         let run_id = format!("reservation-{}", uuid::Uuid::new_v4());
         if !state.try_reserve_chat_send(conv_id, &run_id) {
             return None;
@@ -369,7 +370,7 @@ impl<'a> ChatSendReservation<'a> {
     }
 }
 
-impl Drop for ChatSendReservation<'_> {
+impl Drop for ChatSendReservation {
     fn drop(&mut self) {
         self.state
             .end_chat_reply(&self.conversation_id, &self.run_id);
@@ -542,9 +543,9 @@ mod tests {
 
     #[test]
     fn chat_send_reservation_releases_on_drop() {
-        let state = AppState::new();
+        let state = Arc::new(AppState::new());
         {
-            let r = ChatSendReservation::try_acquire(&state, "conv_a");
+            let r = ChatSendReservation::try_acquire(state.clone(), "conv_a");
             assert!(r.is_some());
             assert!(state.is_session_busy("conv_a"));
             // drop here
@@ -554,17 +555,17 @@ mod tests {
 
     #[test]
     fn chat_send_reservation_returns_none_when_busy() {
-        let state = AppState::new();
-        let r1 = ChatSendReservation::try_acquire(&state, "conv_a");
+        let state = Arc::new(AppState::new());
+        let r1 = ChatSendReservation::try_acquire(state.clone(), "conv_a");
         assert!(r1.is_some());
 
         // 第二次应该失败
-        let r2 = ChatSendReservation::try_acquire(&state, "conv_a");
+        let r2 = ChatSendReservation::try_acquire(state.clone(), "conv_a");
         assert!(r2.is_none());
 
         drop(r1);
         // 释放后可以再次 acquire
-        let r3 = ChatSendReservation::try_acquire(&state, "conv_a");
+        let r3 = ChatSendReservation::try_acquire(state.clone(), "conv_a");
         assert!(r3.is_some());
     }
 }

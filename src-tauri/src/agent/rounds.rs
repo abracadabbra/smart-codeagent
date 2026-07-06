@@ -145,7 +145,7 @@ async fn dispatch_single(
             artifacts: vec![],
             structured_content: None,
         };
-        host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+        host.emit_tool_record(&ctx.conversation_id, &ctx.run_id, &ctx.message_id, &record);
 
         let mut sub_ctx = ctx.clone();
         sub_ctx.tool_call_id = tool_call_id.clone();
@@ -164,7 +164,7 @@ async fn dispatch_single(
             record.status = ToolCallStatus::Cancelled;
             record.error = Some("user denied approval".into());
             record.completed_at = Some(chrono::Utc::now().timestamp());
-            host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+            host.emit_tool_record(&ctx.conversation_id, &ctx.run_id, &ctx.message_id, &record);
 
             return ToolResultBlock {
                 tool_use_id: tool_call_id,
@@ -227,7 +227,7 @@ async fn dispatch_single(
                 artifacts: output.artifacts.clone(),
                 structured_content: output.structured,
             };
-            host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+            host.emit_tool_record(&ctx.conversation_id, &ctx.run_id, &ctx.message_id, &record);
 
             ToolResultBlock {
                 tool_use_id: tool_call_id,
@@ -270,7 +270,7 @@ async fn dispatch_single(
                 artifacts: vec![],
                 structured_content: None,
             };
-            host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+            host.emit_tool_record(&ctx.conversation_id, &ctx.run_id, &ctx.message_id, &record);
 
             let kind = if kind_label == "denied" {
                 ToolResultKind::Denied { reason: msg }
@@ -357,7 +357,7 @@ async fn dispatch_mcp(
             artifacts: vec![],
             structured_content: None,
         };
-        host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+        host.emit_tool_record(&ctx.conversation_id, &ctx.run_id, &ctx.message_id, &record);
 
         let mut sub_ctx = ctx.clone();
         sub_ctx.tool_call_id = tool_call_id.clone();
@@ -368,7 +368,7 @@ async fn dispatch_mcp(
             record.status = ToolCallStatus::Cancelled;
             record.error = Some("user denied approval".into());
             record.completed_at = Some(chrono::Utc::now().timestamp());
-            host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+            host.emit_tool_record(&ctx.conversation_id, &ctx.run_id, &ctx.message_id, &record);
             return ToolResultBlock {
                 tool_use_id: tool_call_id,
                 kind: ToolResultKind::Denied {
@@ -419,7 +419,7 @@ async fn dispatch_mcp(
                 artifacts: res.artifacts.clone(),
                 structured_content: structured,
             };
-            host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+            host.emit_tool_record(&ctx.conversation_id, &ctx.run_id, &ctx.message_id, &record);
 
             ToolResultBlock {
                 tool_use_id: tool_call_id,
@@ -448,7 +448,7 @@ async fn dispatch_mcp(
                 artifacts: vec![],
                 structured_content: None,
             };
-            host.emit_tool_record(&ctx.run_id, &ctx.message_id, &record);
+            host.emit_tool_record(&ctx.conversation_id, &ctx.run_id, &ctx.message_id, &record);
 
             ToolResultBlock {
                 tool_use_id: tool_call_id,
@@ -481,15 +481,18 @@ fn emit_rejected(
 /// 给 main.rs / commands.rs 用的入口：emit `agent:tool_rejected` 事件。
 /// 这是 host trait 之外的直接 emit，因为 tool_rejected 是 loop-level 信号
 /// （不是某个 tool 的记录）。
+///
+/// Phase 3.2：加 `conversation_id` 参数。
 pub fn emit_rejected_direct(
     app: &AppHandle,
+    conversation_id: &str,
     run_id: &str,
     message_id: &str,
     tool_call_id: &str,
     tool_name: &str,
     reason: &str,
 ) {
-    emit_tool_rejected(app, run_id, message_id, tool_call_id, tool_name, reason);
+    emit_tool_rejected(app, conversation_id, run_id, message_id, tool_call_id, tool_name, reason);
 }
 
 // 反引用 ToolOutput 防止 unused warning

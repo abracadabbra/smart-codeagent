@@ -3,11 +3,18 @@
 //!
 //! 借 Kivio `commands.rs` 的 `commands::approve_tool` / `answer_ask_user` 模式。
 //!
-//! Round 3 末了。前端 emit 事件 → 后端 host 收集 oneshot sender →
-//! 用户调 command approve_tool / answer_ask_user → 后端把结果通过 sender 传回 host。
+//! Phase 3.2 重构：
+//! - `approvals` / `ask_users` 保留（key = approval_id / ask_user_id，用于 resolve 查找 sender）
+//! - `generations` 删除 → 移交 `AppState`（per-conv `chat_active_generations`）
+//! - 新增 `app_state: Arc<AppState>` → per-conv pending 路由 + is_generation_active 查询
+//! - 所有 emit payload 加 `conversationId`（events.rs 已改）
+//! - `request_tool_approval` / `request_ask_user` 从 `ctx.conversation_id` 取 conv，
+//!   注册到 `AppState.pending_approvals` / `pending_ask_users`
+//! - `resolve_approval` / `resolve_ask_user` 加 `conversation_id` 参数，同步清 AppState pending
+//! - 删除 `register_generation` / `cancel_generation`（runner / cancel_run 命令直接调 AppState）
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -22,6 +29,7 @@ use crate::ipc::events::{
     AgentPartialAssistantPayload, AgentToolRejectedPayload, AgentApprovalRequestPayload,
     EVT_APPROVAL_REQUEST, EVT_ASK_USER_PROMPT, EVT_PARTIAL_ASSISTANT, EVT_TOOL_REJECTED,
 };
+use crate::state::AppState;
 
 /// 等待中的 approval 请求（key = approval_id）
 pub type ApprovalMap = Mutex<HashMap<String, oneshot::Sender<bool>>>;
@@ -31,24 +39,26 @@ pub type AskUserMap = Mutex<HashMap<String, oneshot::Sender<AskUserResponseResul
 
 pub struct TauriHost {
     pub app: AppHandle,
+    pub app_state: Arc<AppState>,
     pub approvals: ApprovalMap,
     pub ask_users: AskUserMap,
-    /// 每 run_id + generation 的活跃 generation 计数（0 = 已取消）。
-    pub generations: Mutex<HashMap<String, u64>>,
 }
 
 impl TauriHost {
-    pub fn new(app: AppHandle) -> Self {
+    pub fn new(app: AppHandle, app_state: Arc<AppState>) -> Self {
         Self {
             app,
+            app_state,
             approvals: Mutex::new(HashMap::new()),
             ask_users: Mutex::new(HashMap::new()),
-            generations: Mutex::new(HashMap::new()),
         }
     }
 
     /// Tauri command 调：把 approval_id 对应的 sender 取出，发 bool。
-    pub fn resolve_approval(&self, approval_id: &str, allow: bool) -> bool {
+    /// 同时从 AppState.pending_approvals 移除（per-conv badge 路由用）。
+    pub fn resolve_approval(&self, conversation_id: &str, approval_id: &str, allow: bool) -> bool {
+        // 先从 AppState pending 集合移除（即使 sender 已超时，也要清 pending 标记）
+        self.app_state.take_pending_approval(conversation_id, approval_id);
         let tx = self.approvals.lock().unwrap().remove(approval_id);
         match tx {
             Some(tx) => tx.send(allow).is_ok(),
@@ -57,50 +67,61 @@ impl TauriHost {
     }
 
     /// Tauri command 调：把 ask_user_id 对应的 sender 取出，发答案。
-    pub fn resolve_ask_user(&self, ask_user_id: &str, response: AskUserResponseResult) -> bool {
+    /// 同时从 AppState.pending_ask_users 移除。
+    pub fn resolve_ask_user(
+        &self,
+        conversation_id: &str,
+        ask_user_id: &str,
+        response: AskUserResponseResult,
+    ) -> bool {
+        self.app_state.take_pending_ask_user(conversation_id, ask_user_id);
         let tx = self.ask_users.lock().unwrap().remove(ask_user_id);
         match tx {
             Some(tx) => tx.send(response).is_ok(),
             None => false,
         }
     }
-
-    /// 注册新的 generation（命令入口调）。返回 generation 编号。
-    pub fn register_generation(&self, run_id: &str, generation: u64) {
-        self.generations.lock().unwrap().insert(run_id.to_string(), generation);
-    }
-
-    /// 标记 generation 取消（cancel command 调）。
-    pub fn cancel_generation(&self, run_id: &str) {
-        self.generations.lock().unwrap().remove(run_id);
-    }
 }
 
 impl AgentHost for TauriHost {
     fn emit_stream_delta(
         &self,
+        conversation_id: &str,
         run_id: &str,
         message_id: &str,
         delta: &str,
         reasoning_delta: Option<&str>,
     ) {
-        emit_stream_delta(Some(&self.app), run_id, message_id, delta, reasoning_delta);
+        emit_stream_delta(
+            Some(&self.app),
+            conversation_id,
+            run_id,
+            message_id,
+            delta,
+            reasoning_delta,
+        );
     }
 
-    fn emit_stream_done(&self, run_id: &str, message_id: &str, reason: &str) {
+    fn emit_stream_done(&self, conversation_id: &str, run_id: &str, message_id: &str, reason: &str) {
         tracing::info!(
-            "emit stream_done: run_id={}, msg_id={}, reason={}",
-            run_id, message_id, reason
+            "emit stream_done: conv={}, run_id={}, msg_id={}, reason={}",
+            conversation_id, run_id, message_id, reason
         );
-        emit_stream_done(Some(&self.app), run_id, message_id, reason);
+        emit_stream_done(Some(&self.app), conversation_id, run_id, message_id, reason);
     }
 
-    fn emit_tool_record(&self, run_id: &str, message_id: &str, record: &ToolCallRecord) {
+    fn emit_tool_record(
+        &self,
+        conversation_id: &str,
+        run_id: &str,
+        message_id: &str,
+        record: &ToolCallRecord,
+    ) {
         tracing::debug!(
-            "emit tool_record: run_id={}, tool={}, status={:?}, id={}",
-            run_id, record.name, record.status, record.id
+            "emit tool_record: conv={}, run_id={}, tool={}, status={:?}, id={}",
+            conversation_id, run_id, record.name, record.status, record.id
         );
-        emit_tool_record(Some(&self.app), run_id, message_id, record);
+        emit_tool_record(Some(&self.app), conversation_id, run_id, message_id, record);
     }
 
     fn request_tool_approval<'a>(
@@ -109,10 +130,14 @@ impl AgentHost for TauriHost {
         record: &'a ToolCallRecord,
     ) -> AgentHostFuture<'a, bool> {
         let approval_id = uuid::Uuid::new_v4().to_string();
+        let conv_id = ctx.conversation_id.clone();
         let (tx, rx) = oneshot::channel::<bool>();
         self.approvals.lock().unwrap().insert(approval_id.clone(), tx);
+        // 注册到 AppState pending_approvals（per-conv badge 路由用）
+        self.app_state.insert_pending_approval(&conv_id, &approval_id);
 
         let payload = AgentApprovalRequestPayload {
+            conversation_id: conv_id.clone(),
             approval_id: approval_id.clone(),
             run_id: ctx.run_id.to_string(),
             msg_id: ctx.message_id.to_string(),
@@ -122,12 +147,13 @@ impl AgentHost for TauriHost {
             sensitive: record.sensitive,
         };
         tracing::info!(
-            "emit approval_request: approval_id={}, tool={}, tool_call_id={}",
-            approval_id, record.name, ctx.tool_call_id
+            "emit approval_request: conv={}, approval_id={}, tool={}, tool_call_id={}",
+            conv_id, approval_id, record.name, ctx.tool_call_id
         );
         if let Err(e) = self.app.emit(EVT_APPROVAL_REQUEST, payload) {
             tracing::warn!("emit approval_request failed: {e}");
             self.approvals.lock().unwrap().remove(&approval_id);
+            self.app_state.take_pending_approval(&conv_id, &approval_id);
             return Box::pin(async { false });
         }
 
@@ -146,6 +172,7 @@ impl AgentHost for TauriHost {
                         "approval {} sender dropped without response",
                         approval_id
                     );
+                    self.app_state.take_pending_approval(&conv_id, &approval_id);
                     false
                 }
                 Err(_) => {
@@ -153,6 +180,7 @@ impl AgentHost for TauriHost {
                         "approval {} timed out (60s) — likely modal didn't show or user didn't respond",
                         approval_id
                     );
+                    self.app_state.take_pending_approval(&conv_id, &approval_id);
                     false
                 }
             }
@@ -165,13 +193,17 @@ impl AgentHost for TauriHost {
         payload: &'a AskUserPromptPayload,
     ) -> AgentHostFuture<'a, AskUserResponseResult> {
         let ask_user_id = uuid::Uuid::new_v4().to_string();
+        let conv_id = ctx.conversation_id.clone();
         let (tx, rx) = oneshot::channel::<AskUserResponseResult>();
         self.ask_users
             .lock()
             .unwrap()
             .insert(ask_user_id.clone(), tx);
+        // 注册到 AppState pending_ask_users（per-conv badge 路由用）
+        self.app_state.insert_pending_ask_user(&conv_id, &ask_user_id);
 
         let event_payload = AgentAskUserPromptPayload {
+            conversation_id: conv_id.clone(),
             ask_user_id: ask_user_id.clone(),
             run_id: ctx.run_id.to_string(),
             msg_id: ctx.message_id.to_string(),
@@ -179,12 +211,13 @@ impl AgentHost for TauriHost {
             prompt: payload.clone(),
         };
         tracing::info!(
-            "emit ask_user_prompt: ask_user_id={}, tool_call_id={}",
-            ask_user_id, ctx.tool_call_id
+            "emit ask_user_prompt: conv={}, ask_user_id={}, tool_call_id={}",
+            conv_id, ask_user_id, ctx.tool_call_id
         );
         if let Err(e) = self.app.emit(EVT_ASK_USER_PROMPT, event_payload) {
             tracing::warn!("emit ask_user_prompt failed: {e}");
             self.ask_users.lock().unwrap().remove(&ask_user_id);
+            self.app_state.take_pending_ask_user(&conv_id, &ask_user_id);
             return Box::pin(async { AskUserResponseResult::default() });
         }
 
@@ -200,6 +233,7 @@ impl AgentHost for TauriHost {
                 }
                 _ => {
                     tracing::warn!("ask_user {} timed out (300s)", ask_user_id);
+                    self.app_state.take_pending_ask_user(&conv_id, &ask_user_id);
                     AskUserResponseResult {
                         phase: "timeout".into(),
                         answers: Default::default(),
@@ -211,16 +245,18 @@ impl AgentHost for TauriHost {
 
     fn persist_partial_assistant(
         &self,
+        conversation_id: &str,
         run_id: &str,
         message_id: &str,
         records: &[ToolCallRecord],
         api_messages: &[serde_json::Value],
     ) {
         tracing::debug!(
-            "emit partial_assistant: run_id={}, records={}, api_msgs={}",
-            run_id, records.len(), api_messages.len()
+            "emit partial_assistant: conv={}, run_id={}, records={}, api_msgs={}",
+            conversation_id, run_id, records.len(), api_messages.len()
         );
         let payload = AgentPartialAssistantPayload {
+            conversation_id: conversation_id.to_string(),
             run_id: run_id.to_string(),
             msg_id: message_id.to_string(),
             records: records.to_vec(),
@@ -231,20 +267,17 @@ impl AgentHost for TauriHost {
         }
     }
 
-    fn is_generation_active(&self, run_id: &str, generation: u64) -> bool {
-        self.generations
-            .lock()
-            .unwrap()
-            .get(run_id)
-            .copied()
-            .map(|g| g == generation)
-            .unwrap_or(false)
+    fn is_generation_active(&self, conversation_id: &str, generation: u64) -> bool {
+        self.app_state.is_generation_active(conversation_id, generation)
     }
 }
 
 /// 工具被拒后调这个（loops 用来发 `agent:tool_rejected` 事件给前端）。
+///
+/// Phase 3.2：加 `conversation_id` 参数。
 pub fn emit_tool_rejected(
     app: &AppHandle,
+    conversation_id: &str,
     run_id: &str,
     message_id: &str,
     tool_call_id: &str,
@@ -252,6 +285,7 @@ pub fn emit_tool_rejected(
     reason: &str,
 ) {
     let payload = AgentToolRejectedPayload {
+        conversation_id: conversation_id.to_string(),
         run_id: run_id.to_string(),
         msg_id: message_id.to_string(),
         tool_call_id: tool_call_id.to_string(),
@@ -289,5 +323,17 @@ mod tests {
         let (tx, _rx) = oneshot::channel::<AskUserResponseResult>();
         map.lock().unwrap().insert("id2".into(), tx);
         assert_eq!(map.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn app_state_integration_pending_approval() {
+        let state = Arc::new(AppState::new());
+        state.insert_pending_approval("conv_a", "ap_1");
+        assert!(state.has_pending_approval("conv_a"));
+
+        // 模拟 resolve_approval 的 AppState 部分
+        let existed = state.take_pending_approval("conv_a", "ap_1");
+        assert!(existed);
+        assert!(!state.has_pending_approval("conv_a"));
     }
 }

@@ -119,12 +119,12 @@ impl Message {
 
 pub mod host;
 pub mod host_impl;
-pub mod loop_;
 pub mod rounds;
 pub mod runner;
 pub mod tools;
 pub mod types;
 
+pub use runner::{run_agent_loop, SessionRunner};
 pub use tools::{
     AskUserAnswer, AskUserOption, AskUserPromptPayload, AskUserQuestion, AskUserResponseResult,
     ChatToolDefinition, Tool, ToolCallRecord, ToolCallStatus, ToolContext, ToolError, ToolFuture,

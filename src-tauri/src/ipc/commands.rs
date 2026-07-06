@@ -1,51 +1,166 @@
 //! Tauri Command handler。
 //!
-//! Phase 2: send_message 接受 run_id + generation（前端唯一生成，避免后端重复）；
-//! 新增 approve_tool / answer_ask_user 两个 command。
-//! Phase 3.1: 新增 list_mcp_servers / list_mcp_server_states。
+//! Phase 3.2 重构：
+//! - `send_message`：加 `conversation_id`，改用 `run_agent_loop` + `SessionRunner`
+//! - `cancel_run` / `approve_tool` / `answer_ask_user`：加 `conversation_id`
+//! - 返回 `SendResult`（busy 时 `success: false`）
+//! - 删除 `State<'_, Arc<AgentLoop>>` 依赖
+//! - Phase 3.1: 保留 `list_mcp_servers` / `list_mcp_server_states`
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 
 use crate::agent::host_impl::TauriHost;
-use crate::agent::loop_::AgentLoop;
+use crate::agent::runner::{run_agent_loop, SessionRunner};
 use crate::agent::tools::AskUserResponseResult;
+use crate::agent::types::AgentRunConfig;
 use crate::mcp::{McpManager, McpServerState};
+use crate::session::store::SessionStore;
 use crate::settings::{ChatMcpServer, Settings};
+use crate::state::{AppState, ChatSendReservation};
 
-/// Phase 1 兼容 + Phase 2：用户发消息，启动一轮 Agent Loop。
-/// 立即返回（不阻塞 IPC），实际执行由 tokio::spawn 后台进行。
+/// `send_message` 返回值。
+///
+/// `success: false` 表示该会话已有 run 在跑（busy）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendResult {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// 用户发消息，启动一轮 Agent Loop。
+///
+/// Phase 3.2：加 `conversation_id`，后端生成 `message_id` + `generation`，
+/// 改用 `run_agent_loop` + `SessionRunner`。立即返回（不阻塞 IPC），
+/// 实际执行由 `tokio::spawn` 后台进行。
 #[tauri::command]
 pub async fn send_message(
     app: AppHandle,
-    agent: State<'_, Arc<AgentLoop>>,
+    app_state: State<'_, Arc<AppState>>,
+    session_store: State<'_, Arc<SessionStore>>,
+    conversation_id: String,
     text: String,
-    assistant_id: String,
     run_id: String,
-    generation: u64,
-) -> Result<(), String> {
+) -> Result<SendResult, String> {
     tracing::info!(
-        "send_message invoked: text={:?}, assistantId={:?}, run_id={:?}",
+        "send_message invoked: conv={}, text={:?}, run_id={:?}",
+        conversation_id,
         text,
-        assistant_id,
         run_id
     );
 
-    let agent: Arc<AgentLoop> = (*agent).clone();
-    agent.attach_app(app).await;
-    agent.spawn_run(text, assistant_id, run_id, generation);
+    let app_state_arc = app_state.inner().clone();
+    let session_store_arc = session_store.inner().clone();
 
-    Ok(())
+    // 1. busy 守门（ChatSendReservation，drop 时自动释放）
+    let reservation = match ChatSendReservation::try_acquire(app_state_arc.clone(), &conversation_id)
+    {
+        Some(r) => r,
+        None => {
+            return Ok(SendResult {
+                success: false,
+                error: Some("session busy".into()),
+            })
+        }
+    };
+
+    // 2. 后端生成 message_id + generation
+    let message_id = format!("msg_{}", uuid::Uuid::new_v4());
+    let generation = app_state_arc.new_run_generation(&conversation_id);
+
+    // 3. 加载 history + push user 消息（失败时清理 generation + reservation）
+    let history = match session_store_arc.load_messages(&conversation_id).await {
+        Ok(h) => h,
+        Err(e) => {
+            app_state_arc.end_generation(&conversation_id, generation);
+            return Err(e);
+        }
+    };
+
+    let mut session = SessionRunner::new(
+        conversation_id.clone(),
+        run_id.clone(),
+        message_id.clone(),
+        history,
+        generation,
+    );
+    if let Err(e) = session.push_user(&session_store_arc, &text).await {
+        app_state_arc.end_generation(&conversation_id, generation);
+        return Err(e);
+    }
+
+    // 4. 获取 host + config + settings + mcp_manager
+    let host: Arc<dyn crate::agent::host::AgentHost> = match app.try_state::<Arc<TauriHost>>() {
+        Some(h) => h.inner().clone(),
+        None => {
+            app_state_arc.end_generation(&conversation_id, generation);
+            return Err("TauriHost not managed".into());
+        }
+    };
+    let config = AgentRunConfig::default();
+    let settings = match app.try_state::<Arc<Mutex<Settings>>>() {
+        Some(s) => s.lock().await.clone(),
+        None => {
+            app_state_arc.end_generation(&conversation_id, generation);
+            return Err("Settings not managed".into());
+        }
+    };
+    let mcp_manager = app
+        .try_state::<Arc<McpManager>>()
+        .map(|m| m.inner().clone());
+
+    // 5. spawn run_agent_loop（后台执行，不阻塞 IPC）
+    let app_clone = app.clone();
+    let conv_id = conversation_id.clone();
+    let run_id_clone = run_id.clone();
+
+    tokio::spawn(async move {
+        // reservation 持有到 run 结束（drop 时释放 busy 槽位）
+        let _reservation = reservation;
+        let result = run_agent_loop(
+            config,
+            host,
+            Some(app_clone),
+            &mut session,
+            &session_store_arc,
+            &app_state_arc,
+            mcp_manager.as_ref(),
+            &settings,
+        )
+        .await;
+
+        // 自然结束：移除 generation（区别于 cancel 的清空全部）
+        app_state_arc.end_generation(&conv_id, generation);
+
+        match &result {
+            Ok(r) => tracing::info!(
+                "run {} completed: rounds={}, tool_calls={}",
+                run_id_clone,
+                r.rounds,
+                r.tool_records.len()
+            ),
+            Err(e) => tracing::error!("run {} failed: {}", run_id_clone, e),
+        }
+        // _reservation drop → end_chat_reply（释放 busy）
+    });
+
+    Ok(SendResult {
+        success: true,
+        error: None,
+    })
 }
 
 /// 用户对 approval_request 的响应。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApproveToolArgs {
+    pub conversation_id: String,
     pub approval_id: String,
     pub allow: bool,
 }
@@ -58,7 +173,7 @@ pub async fn approve_tool(
     let host = app
         .try_state::<Arc<TauriHost>>()
         .ok_or_else(|| "TauriHost not managed".to_string())?;
-    host.resolve_approval(&args.approval_id, args.allow);
+    host.resolve_approval(&args.conversation_id, &args.approval_id, args.allow);
     Ok(())
 }
 
@@ -66,6 +181,7 @@ pub async fn approve_tool(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnswerAskUserArgs {
+    pub conversation_id: String,
     pub ask_user_id: String,
     pub response: AskUserResponseResult,
 }
@@ -78,20 +194,17 @@ pub async fn answer_ask_user(
     let host = app
         .try_state::<Arc<TauriHost>>()
         .ok_or_else(|| "TauriHost not managed".to_string())?;
-    host.resolve_ask_user(&args.ask_user_id, args.response);
+    host.resolve_ask_user(&args.conversation_id, &args.ask_user_id, args.response);
     Ok(())
 }
 
-/// 用户取消当前 generation。
+/// 用户取消当前会话的 generation。
 #[tauri::command]
 pub async fn cancel_run(
-    app: AppHandle,
-    run_id: String,
+    app_state: State<'_, Arc<AppState>>,
+    conversation_id: String,
 ) -> Result<(), String> {
-    let host = app
-        .try_state::<Arc<TauriHost>>()
-        .ok_or_else(|| "TauriHost not managed".to_string())?;
-    host.cancel_generation(&run_id);
+    app_state.cancel_chat_generation(&conversation_id);
     Ok(())
 }
 

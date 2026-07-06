@@ -172,7 +172,7 @@ pub async fn run_agent_loop(
 
     // 1. Idle → Prepare
     app_state.set_session_state(&conv_id, AgentState::Prepare);
-    emit_status(app.as_ref(), AgentState::Prepare);
+    emit_status(app.as_ref(), &conv_id, AgentState::Prepare);
 
     // 2. 构造 provider + tool registry
     let anthropic_cfg = AnthropicConfig::from_env();
@@ -193,7 +193,7 @@ pub async fn run_agent_loop(
 
     // 4. ToolLoop
     app_state.set_session_state(&conv_id, AgentState::ToolLoop);
-    emit_status(app.as_ref(), AgentState::ToolLoop);
+    emit_status(app.as_ref(), &conv_id, AgentState::ToolLoop);
 
     let mut all_tool_records: Vec<ToolCallRecord> = Vec::new();
     let mut final_text = String::new();
@@ -232,11 +232,11 @@ pub async fn run_agent_loop(
             Ok(s) => s,
             Err(e) => {
                 let msg = format!("request failed: {e}");
-                emit_error(app.as_ref(), &assistant_id, &msg);
+                emit_error(app.as_ref(), &conv_id, &assistant_id, &msg);
                 app_state.set_session_state(&conv_id, AgentState::Stop);
-                emit_status(app.as_ref(), AgentState::Stop);
+                emit_status(app.as_ref(), &conv_id, AgentState::Stop);
                 app_state.set_session_state(&conv_id, AgentState::Idle);
-                emit_status(app.as_ref(), AgentState::Idle);
+                emit_status(app.as_ref(), &conv_id, AgentState::Idle);
                 return Err(msg);
             }
         };
@@ -244,6 +244,7 @@ pub async fn run_agent_loop(
         let round_resp = consume_stream(
             &mut stream,
             &app,
+            &conv_id,
             &run_id,
             &assistant_id,
             &host,
@@ -261,6 +262,7 @@ pub async fn run_agent_loop(
 
         if !round_resp.tool_uses.is_empty() {
             let ctx = ToolContext {
+                conversation_id: conv_id.clone(),
                 run_id: run_id.clone(),
                 message_id: assistant_id.clone(),
                 tool_call_id: String::new(),
@@ -351,7 +353,7 @@ pub async fn run_agent_loop(
                 &round_resp.tool_uses,
                 &tool_results,
             );
-            host.persist_partial_assistant(&run_id, &assistant_id, &all_tool_records, &api_msgs);
+            host.persist_partial_assistant(&conv_id, &run_id, &assistant_id, &all_tool_records, &api_msgs);
 
             if round_resp.text.is_empty() && round_resp.tool_uses.is_empty() {
                 warn!("round {round}: empty response (no text, no tool_use), breaking");
@@ -365,9 +367,9 @@ pub async fn run_agent_loop(
     }
 
     // 5. Stop → Idle
-    emit_stream_done(app.as_ref(), &run_id, &assistant_id, "end_turn");
+    emit_stream_done(app.as_ref(), &conv_id, &run_id, &assistant_id, "end_turn");
     app_state.set_session_state(&conv_id, AgentState::Stop);
-    emit_status(app.as_ref(), AgentState::Stop);
+    emit_status(app.as_ref(), &conv_id, AgentState::Stop);
 
     // 6. 持久化 final assistant 文本
     if !final_text.is_empty() {
@@ -392,16 +394,19 @@ pub async fn run_agent_loop(
     );
 
     app_state.set_session_state(&conv_id, AgentState::Idle);
-    emit_status(app.as_ref(), AgentState::Idle);
+    emit_status(app.as_ref(), &conv_id, AgentState::Idle);
     Ok(result)
 }
 
 /// 消费单个 stream，累积 text + tool_use。
 ///
 /// 从 `AgentLoop::consume_stream` 迁移，逻辑不变。
+///
+/// Phase 3.2：加 `conversation_id` 参数，传给 host emit 方法（per-conv 路由）。
 async fn consume_stream(
     stream: &mut crate::providers::TokenStream,
     app: &Option<AppHandle>,
+    conversation_id: &str,
     run_id: &str,
     message_id: &str,
     host: &Arc<dyn AgentHost>,
@@ -424,7 +429,7 @@ async fn consume_stream(
                         if delta.len() > 80 { &delta[..80] } else { &delta }
                     );
                     text.push_str(&delta);
-                    host.emit_stream_delta(run_id, message_id, &delta, None);
+                    host.emit_stream_delta(conversation_id, run_id, message_id, &delta, None);
                 }
                 StreamChunk::ToolUseStart { id, name } => {
                     info!("SSE tool_use start: id={}, name={}", id, name);
@@ -454,7 +459,7 @@ async fn consume_stream(
                         artifacts: vec![],
                         structured_content: None,
                     };
-                    host.emit_tool_record(run_id, message_id, &record);
+                    host.emit_tool_record(conversation_id, run_id, message_id, &record);
                     all_records.push(record);
                 }
                 StreamChunk::ToolUseInputDelta(delta) => {
