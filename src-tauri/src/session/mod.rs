@@ -19,6 +19,8 @@
 //! 和崩溃恢复（design.md §2.1）。
 
 pub mod storage;
+pub mod store;
 pub mod types;
 
+pub use store::{ConversationData, SessionStore};
 pub use types::{ChatMessage, Conversation, ConversationListItem, SessionMessagesPage};
