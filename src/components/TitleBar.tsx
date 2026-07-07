@@ -26,13 +26,13 @@ export function TitleBar() {
       <div className="flex-1 h-full" onMouseDown={startDrag} />
 
       {/* 右侧可操作区 */}
-      <div className="flex items-center gap-2 h-full" data-tauri-no-drag-region>
+      <div className="flex items-center gap-2 h-full pr-4" data-tauri-no-drag-region>
         <button
           type="button"
-          className="flex items-center gap-1.5 text-xs text-ink-400 hover:text-ink-200 transition-colors px-2 py-1 rounded-md hover:bg-ink-800/50"
+          className="flex items-center gap-2 text-xs text-ink-400 hover:text-ink-200 transition-colors px-3 py-1.5 rounded-md hover:bg-ink-800/50"
         >
           <span>打开编辑器</span>
-          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg className="w-3.5 h-3.5 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
             <polyline points="15 3 21 3 21 9" />
             <line x1="10" y1="14" x2="21" y2="3" />

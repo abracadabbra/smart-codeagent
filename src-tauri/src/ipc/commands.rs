@@ -244,6 +244,30 @@ pub async fn get_session_state(
     Ok(app_state.get_session_state(&conversation_id).as_str().to_string())
 }
 
+/// 列出所有非 Idle 状态的会话（前端启动时同步 + 诊断"卡住"的会话）。
+///
+/// 返回 `[(conv_id, state_str), ...]`。
+#[tauri::command]
+pub async fn list_active_sessions(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<(String, String)>, String> {
+    Ok(app_state
+        .list_non_idle_sessions()
+        .into_iter()
+        .map(|(id, s)| (id, s.as_str().to_string()))
+        .collect())
+}
+
+/// 强制重置某会话为 Idle（解除僵尸状态：前端卡 Running 但后端 run 已不存在）。
+#[tauri::command]
+pub async fn force_reset_session(
+    app_state: State<'_, Arc<AppState>>,
+    conversation_id: String,
+) -> Result<(), String> {
+    app_state.force_reset_session(&conversation_id);
+    Ok(())
+}
+
 /// 列出 settings.json 中配置的所有 MCP server（前端 StatusBar / 设置面板用）。
 #[tauri::command]
 pub async fn list_mcp_servers(

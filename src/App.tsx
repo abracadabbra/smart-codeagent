@@ -30,7 +30,7 @@ export function App() {
       <AgentEventBridge />
       <TitleBar />
 
-      <main className="flex-1 flex overflow-hidden">
+      <main className="flex-1 flex overflow-hidden pt-11">
         <SessionList />
         <section className="flex-1 min-w-0 bg-ink-950 relative">
           <ChatView />

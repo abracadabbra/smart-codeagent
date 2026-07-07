@@ -22,6 +22,7 @@ interface SessionState {
   markGenerating: (id: string, generating: boolean) => void;
   addPendingApproval: (id: string) => void;
   removePendingApproval: (id: string) => void;
+  forceResetSession: (id: string) => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -37,6 +38,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const { activeSessionId } = get();
       const nextActive = activeSessionId ?? (items.length > 0 ? items[0].id : null);
       set({ sessions: items, activeSessionId: nextActive });
+
+      // 全局同步：一次性拉取所有非 Idle 会话，同步 agentStore + generatingIds
+      // 这样能立刻发现"卡住"的会话（后端 Running 但前端不知道）
+      try {
+        const active = await invoke<[string, string][]>("list_active_sessions");
+        const activeIds = new Set<string>();
+        for (const [convId, stateStr] of active) {
+          activeIds.add(convId);
+          useAgentStore.getState().setStateFor(convId, stateStr as AgentState);
+        }
+        // 所有非 Idle 的会话标记为 generating
+        set({ generatingIds: new Set(activeIds) });
+      } catch {
+        // 忽略：命令不可用时降级
+      }
+
       if (nextActive) {
         useChatStore.getState().setActiveConversation(nextActive);
         useAgentStore.getState().setActiveConversation(nextActive);
@@ -45,18 +62,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const cached = chat.messagesBySession[nextActive];
         if (!cached || cached.length === 0) {
           void chat.loadMessagesPage(nextActive);
-        }
-        // 安全网：从后端同步真实 agent 状态，防止前端状态卡死
-        try {
-          const realState = await invoke<string>("get_session_state", {
-            conversationId: nextActive,
-          });
-          useAgentStore.getState().setStateFor(nextActive, realState as AgentState);
-          if (realState === "Idle") {
-            get().markGenerating(nextActive, false);
-          }
-        } catch {
-          // 忽略：旧状态保留
         }
       }
     } catch (err) {
@@ -216,6 +221,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       next.delete(id);
       return { pendingApprovalIds: next };
     });
+  },
+
+  forceResetSession: async (id) => {
+    try {
+      await invoke("force_reset_session", { conversationId: id });
+      useAgentStore.getState().setStateFor(id, "Idle");
+      get().markGenerating(id, false);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[sessionStore] force_reset_session failed:", err);
+    }
   },
 }));
 

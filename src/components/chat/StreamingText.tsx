@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 interface StreamingTextProps {
@@ -7,25 +7,27 @@ interface StreamingTextProps {
 }
 
 /**
- * 流式文本组件：支持 Markdown 渲染。
- * streaming 时在末尾附加闪烁光标。
+ * 流式文本组件。
+ *
+ * 关键策略：
+ * - streaming 时**不解析 Markdown**，直接按纯文本预格式化渲染。因为流式过程中
+ *   代码块围栏（```）可能尚未闭合，此时解析 Markdown 会把代码块内容当成普通
+ *   段落拍平，导致排版混乱（用户反馈的"乱七八糟"）。
+ * - streaming 完成后再用 MarkdownMessage 正常渲染 Markdown。
  *
  * 性能优化：
- * 1. 代码围栏保护：未闭合的 ``` 数量为奇数时，只渲染到最后一个 ``` 之前，避免吞掉后续文本
- * 2. 渲染节流：流式输出时不每 token 都解析 Markdown（会导致主线程阻塞、UI 卡顿），
- *    而是每 RENDER_INTERVAL_MS ms 才更新一次渲染内容
+ * - 渲染节流：流式输出时每 RENDER_INTERVAL_MS ms 才更新一次屏幕，避免每 token
+ *   重渲染阻塞主线程。
  */
 const RENDER_INTERVAL_MS = 150;
 
 export function StreamingText({ text, streaming }: StreamingTextProps) {
-  // 节流：流式输出时每隔一段时间才更新渲染文本
   const [renderedText, setRenderedText] = useState(text);
   const lastRenderTimeRef = useRef(0);
   const rafRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!streaming) {
-      // 非流式状态，直接同步
       setRenderedText(text);
       return;
     }
@@ -34,11 +36,9 @@ export function StreamingText({ text, streaming }: StreamingTextProps) {
     const elapsed = now - lastRenderTimeRef.current;
 
     if (elapsed >= RENDER_INTERVAL_MS) {
-      // 已超过节流间隔，立即更新
       lastRenderTimeRef.current = now;
       setRenderedText(text);
     } else if (rafRef.current === null) {
-      // 安排下一次更新
       const delay = RENDER_INTERVAL_MS - elapsed;
       rafRef.current = window.setTimeout(() => {
         lastRenderTimeRef.current = Date.now();
@@ -62,25 +62,17 @@ export function StreamingText({ text, streaming }: StreamingTextProps) {
     }
   }, [streaming, text]);
 
-  const displayText = useMemo(() => {
-    if (!streaming) return renderedText;
-    const fences = Array.from(renderedText.matchAll(/```/g));
-    if (fences.length % 2 === 1) {
-      const lastFenceIndex = fences[fences.length - 1].index ?? renderedText.length;
-      return renderedText.slice(0, lastFenceIndex);
-    }
-    return renderedText;
-  }, [renderedText, streaming]);
-
-  return (
-    <div className="relative">
-      <MarkdownMessage content={displayText} />
-      {streaming && (
+  if (streaming) {
+    return (
+      <div className="relative whitespace-pre-wrap font-mono text-[13px] leading-[1.6] text-ink-100">
+        {renderedText}
         <span
           className="inline-block w-1.5 h-3.5 bg-ink-100 align-text-bottom animate-cursor-blink ml-0.5 rounded-sm"
           aria-hidden="true"
         />
-      )}
-    </div>
-  );
+      </div>
+    );
+  }
+
+  return <MarkdownMessage content={renderedText} />;
 }

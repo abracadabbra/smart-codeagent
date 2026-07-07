@@ -204,6 +204,35 @@ impl AppState {
             .unwrap_or(AgentState::Idle)
     }
 
+    /// 列出所有非 Idle 状态的会话（前端启动时同步用，诊断"卡住"的会话）。
+    ///
+    /// 返回 (conv_id, state) 列表。前端可据此同步 agentStore，或对僵尸状态强制重置。
+    pub fn list_non_idle_sessions(&self) -> Vec<(String, AgentState)> {
+        self.session_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, s)| **s != AgentState::Idle)
+            .map(|(k, v)| (k.clone(), *v))
+            .collect()
+    }
+
+    /// 强制重置某会话为 Idle：清空活跃 generation + replies + 状态。
+    ///
+    /// 用于解除"僵尸"状态（前端卡在 Running 但后端 run 已不存在）。
+    pub fn force_reset_session(&self, conv_id: &str) {
+        if let Some(gens) = self.chat_active_generations.lock().unwrap_or_else(|e| e.into_inner()).get_mut(conv_id) {
+            gens.clear();
+        }
+        if let Some(runs) = self.chat_active_replies.lock().unwrap_or_else(|e| e.into_inner()).get_mut(conv_id) {
+            runs.clear();
+        }
+        self.session_states
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(conv_id.to_string(), AgentState::Idle);
+    }
+
     // -----------------------------------------------------------------------
     // pending approvals / ask_users（per-session + badge 路由，D8）
     // -----------------------------------------------------------------------

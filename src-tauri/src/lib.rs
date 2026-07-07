@@ -17,7 +17,8 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::agent::host_impl::TauriHost;
 use crate::ipc::commands::{
-    answer_ask_user, approve_tool, cancel_run, get_session_state, list_mcp_server_states,
+    answer_ask_user, approve_tool, cancel_run, get_session_state, list_active_sessions,
+    force_reset_session, list_mcp_server_states,
     list_mcp_servers, send_message,
 };
 use crate::mcp::McpManager;
@@ -87,6 +88,8 @@ pub fn run() {
             answer_ask_user,
             cancel_run,
             get_session_state,
+            list_active_sessions,
+            force_reset_session,
             // Phase 3.1 MCP 命令
             list_mcp_servers,
             list_mcp_server_states,

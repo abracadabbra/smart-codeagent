@@ -47,8 +47,8 @@ export function SessionList() {
 
   return (
     <aside className="w-64 shrink-0 border-r border-ink-900 bg-ink-950 flex flex-col h-full">
-      {/* 创建按钮 — 顶部留出交通灯安全距离 */}
-      <div className="px-3 pt-11 pb-3">
+      {/* 创建按钮 */}
+      <div className="px-3 pt-3 pb-3">
         <button
           onClick={() => void createSession()}
           className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-surface-raised hover:bg-surface-hover border border-ink-800/60 transition-colors text-sm text-ink-100"

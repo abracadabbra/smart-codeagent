@@ -18,6 +18,17 @@ const MarkdownContext = createContext<MarkdownContextValue>({
   insideList: false,
 });
 
+function extractText(node: React.ReactNode): string {
+  if (node == null) return "";
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  if ("props" in (node as any) && (node as any).props?.children) {
+    return extractText((node as any).props.children);
+  }
+  return "";
+}
+
 const codeTheme = {
   ...oneDark,
   'pre[class*="language-"]': {
@@ -36,7 +47,7 @@ const codeTheme = {
 
 function InlineCode({ children }: { children?: React.ReactNode }) {
   return (
-    <code className="inline-block px-1.5 py-0.5 rounded-md bg-ink-800/70 text-[#e6edf3] text-[0.85em] font-mono border border-ink-700/40 align-text-bottom">
+    <code className="inline px-1.5 py-0.5 rounded-md bg-ink-800/70 text-[#e6edf3] text-[0.85em] font-mono border border-ink-700/40 align-baseline leading-none">
       {children}
     </code>
   );
@@ -57,7 +68,11 @@ function CodeBlock({
   const language = match ? match[1] : "";
   const code = String(children ?? "").replace(/\n$/, "");
 
-  if (inline || ctx.insideTable || (ctx.insideList && !code.includes("\n"))) {
+  // 短代码块降级为行内样式：LLM 经常把本应行内引用的短标识符用 ``` ``` 围栏包起来，
+  // 如果内容只有一行且较短，按行内 code 渲染，避免破坏段落排版。
+  const isShortBlock =
+    !inline && !code.includes("\n") && code.length > 0 && code.length <= 80 && !className;
+  if (inline || ctx.insideTable || (ctx.insideList && !code.includes("\n")) || isShortBlock) {
     return <InlineCode>{children}</InlineCode>;
   }
 
@@ -126,7 +141,25 @@ export function MarkdownMessage({ content }: MarkdownMessageProps) {
             );
           },
           p({ children }) {
-            return <p className="my-2 first:mt-0 last:mb-0">{children}</p>;
+            const text = extractText(children);
+            // 当段落包含多行且看起来像代码时保留换行和缩进，
+            // 避免 LLM 没加围栏代码块时源码被拍平成一段。
+            const lines = text.split("\n");
+            const looksLikeCode =
+              lines.length >= 3 &&
+              lines.filter((l) =>
+                /^(\s*\/\/|\s*#\[|\s*use\s+|\s*mod\s+|\s*fn\s+|\s*pub\s+|\s*struct\s+|\s*enum\s+|\s*impl\s+|\s*let\s+|\s*const\s+|\s*match\s+|\s*if\s+)/.test(l),
+              ).length >= 2;
+            return (
+              <p
+                className={[
+                  "my-2 first:mt-0 last:mb-0",
+                  looksLikeCode ? "whitespace-pre-wrap font-mono text-[13px] bg-ink-900/30 border border-ink-800/30 rounded-lg p-3" : "",
+                ].join(" ")}
+              >
+                {children}
+              </p>
+            );
           },
           h1({ children }) {
             return (
@@ -168,7 +201,7 @@ export function MarkdownMessage({ content }: MarkdownMessageProps) {
             );
           },
           li({ children }) {
-            return <li className="pl-0.5">{children}</li>;
+            return <li className="pl-0.5 leading-[1.7]">{children}</li>;
           },
           blockquote({ children }) {
             return (

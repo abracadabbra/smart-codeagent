@@ -132,15 +132,28 @@ impl Provider for AnthropicClient {
                 .collect()
         };
 
+        // 预计算长度日志用（system 可能被 move 之前）
+        let system_len = req.system.as_deref().map(|s| s.len()).unwrap_or(0);
+
         // messages: 系统提示作为第一条 system 消息（OpenAI 不用顶层 system 字段）
         let mut messages_api: Vec<serde_json::Value> = Vec::new();
-        if let Some(system) = req.system {
-            messages_api.push(serde_json::json!({
-                "role": "system",
-                "content": system,
-            }));
+        if let Some(ref system) = req.system {
+            let system = system.trim();
+            if !system.is_empty() {
+                messages_api.push(serde_json::json!({
+                    "role": "system",
+                    "content": system,
+                }));
+            }
         }
         for m in &req.messages {
+            // 过滤 content 为空字符串的消息（SenseNova 会报 input length 错误）
+            if m.role == "user" || m.role == "tool" {
+                if m.content.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                    tracing::warn!("skip empty {} message", m.role);
+                    continue;
+                }
+            }
             // Message 已经是 OpenAI 格式（serde 序列化），但 content 是 Option<String>
             // OpenAI 要求 content 至少是 null 或字符串，serde 会把 None 序列化成 null
             let mut msg = serde_json::to_value(m).unwrap_or_else(|_| {
@@ -153,7 +166,54 @@ impl Provider for AnthropicClient {
             messages_api.push(msg);
         }
 
+        if messages_api.is_empty() {
+            return Err(ProviderError::Api {
+                status: 400,
+                message: "messages is empty after filtering".into(),
+            });
+        }
+
+        // 上下文截断保护：如果 messages 总字符数超过阈值，丢弃早期消息。
+        // 保留 system（第一条）和最近的消息，避免超出模型 input length 限制。
+        const MAX_MESSAGES_CHARS: usize = 400_000;
+        let total_chars: usize = messages_api
+            .iter()
+            .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
+            .sum();
+        if total_chars > MAX_MESSAGES_CHARS && messages_api.len() > 2 {
+            let system = messages_api[0].clone();
+            let rest = &messages_api[1..];
+            let mut trimmed: Vec<serde_json::Value> = Vec::new();
+            let mut kept_chars = serde_json::to_string(&system).map(|s| s.len()).unwrap_or(0);
+            for m in rest.iter().rev() {
+                let len = serde_json::to_string(m).map(|s| s.len()).unwrap_or(0);
+                if kept_chars + len > MAX_MESSAGES_CHARS {
+                    break;
+                }
+                trimmed.push(m.clone());
+                kept_chars += len;
+            }
+            trimmed.reverse();
+            trimmed.insert(0, system);
+            tracing::warn!(
+                "messages too long ({} chars), truncated from {} to {} messages",
+                total_chars,
+                messages_api.len(),
+                trimmed.len()
+            );
+            messages_api = trimmed;
+        }
+
         let tools_count = tools_api.len();
+
+        // 计算各部分长度，帮助定位 "Range of input length should be [1, 1000000]"
+        let messages_json_len = serde_json::to_string(&messages_api).map(|s| s.len()).unwrap_or(0);
+        let tools_json_len = serde_json::to_string(&tools_api).map(|s| s.len()).unwrap_or(0);
+        tracing::info!(
+            "POST {} | model={} | messages={} | tools={} | system_len={} | messages_json_len={} | tools_json_len={}",
+            url, req.model, req.messages.len(), tools_count, system_len, messages_json_len, tools_json_len
+        );
+
         let mut body = serde_json::json!({
             "model": req.model,
             "max_tokens": req.max_tokens,
@@ -163,11 +223,6 @@ impl Provider for AnthropicClient {
         if !tools_api.is_empty() {
             body["tools"] = serde_json::Value::Array(tools_api);
         }
-
-        tracing::info!(
-            "POST {} | model={} | messages={} | tools={}",
-            url, req.model, req.messages.len(), tools_count
-        );
         tracing::debug!("request body: {}", body);
 
         let response = self

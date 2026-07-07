@@ -27,6 +27,7 @@ export function SessionItem({ session, isActive }: SessionItemProps) {
   const togglePin = useSessionStore((s) => s.togglePin);
   const renameSession = useSessionStore((s) => s.renameSession);
   const deleteSession = useSessionStore((s) => s.deleteSession);
+  const forceResetSession = useSessionStore((s) => s.forceResetSession);
 
   const isGenerating = generatingIds.has(session.id);
   const hasPendingApproval = pendingApprovalIds.has(session.id);
@@ -95,6 +96,11 @@ export function SessionItem({ session, isActive }: SessionItemProps) {
     }
   };
 
+  const handleForceStop = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void forceResetSession(session.id);
+  };
+
   return (
     <div
       onClick={handleClick}
@@ -161,6 +167,17 @@ export function SessionItem({ session, isActive }: SessionItemProps) {
 
       {!isRenaming && (
         <div className="absolute top-1 right-1 hidden group-hover:flex gap-0.5 bg-ink-900/90 rounded-md p-0.5">
+          {isGenerating && (
+            <button
+              onClick={handleForceStop}
+              className="p-1 rounded hover:bg-red-900/50 text-ink-500 hover:text-red-400"
+              title="强制停止"
+            >
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="1.5" />
+              </svg>
+            </button>
+          )}
           <button
             onClick={handlePin}
             className="p-1 rounded hover:bg-ink-700 text-ink-500 hover:text-ink-200"

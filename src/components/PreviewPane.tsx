@@ -42,8 +42,7 @@ export function PreviewPane() {
 
   return (
     <aside className="w-72 shrink-0 border-l border-ink-800/60 bg-ink-900/30 flex flex-col">
-      <div className="h-12 shrink-0 px-3 flex items-center justify-between border-b border-ink-800/60 bg-ink-900/40">
-        <span className="text-xs font-medium text-ink-200">Preview</span>
+      <div className="h-12 shrink-0 px-3 flex items-center gap-2 border-b border-ink-800/60 bg-ink-900/40">
         <button
           type="button"
           onClick={togglePreview}
@@ -54,6 +53,7 @@ export function PreviewPane() {
             <path d="M4 14h6v6H4zM4 4h6v6H4zM14 4h6v6h-6zM14 14h6v6h-6z" />
           </svg>
         </button>
+        <span className="text-xs font-medium text-ink-200">Preview</span>
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-2">

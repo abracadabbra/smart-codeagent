@@ -20,7 +20,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} my-3.5`}>
       {isUser ? (
-        <div className="max-w-[75%] rounded-2xl rounded-tr-sm px-4.5 py-3 bg-brand-600 text-white text-base leading-[1.65] shadow-sm">
+        <div className="max-w-[75%] rounded-2xl rounded-tr-sm px-5 py-3.5 bg-accent text-white text-base leading-[1.65] shadow-sm">
           <div className="whitespace-pre-wrap break-words selection-brand">
             {message.content}
           </div>
