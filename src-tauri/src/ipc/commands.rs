@@ -291,3 +291,58 @@ pub async fn list_mcp_server_states(
         .ok_or_else(|| "McpManager not managed".to_string())?;
     Ok(mcp_manager.list_server_states().await)
 }
+
+/// 保存配置到 settings.json。
+/// 前端修改配置后调用此命令，修改会立即持久化到磁盘。
+#[tauri::command]
+pub async fn save_settings(
+    app: AppHandle,
+    settings: Settings,
+) -> Result<(), String> {
+    let settings_state = app
+        .try_state::<Arc<Mutex<Settings>>>()
+        .ok_or_else(|| "Settings not managed".to_string())?;
+
+    let mut settings_guard = settings_state.lock().await;
+    *settings_guard = settings.clone();
+    drop(settings_guard);
+
+    settings.save_to_disk(&app)
+}
+
+/// 热重载配置：从磁盘重新加载 settings.json，然后 McpManager 重新连接所有 server。
+/// 无需重启应用即可应用新配置。
+#[tauri::command]
+pub async fn reload_settings(
+    app: AppHandle,
+) -> Result<Vec<ChatMcpServer>, String> {
+    let settings_state = app
+        .try_state::<Arc<Mutex<Settings>>>()
+        .ok_or_else(|| "Settings not managed".to_string())?;
+
+    let mut settings = settings_state.lock().await;
+    settings.reload_from_disk(&app);
+    let servers = settings.mcp.servers.clone();
+
+    let mcp_manager = app
+        .try_state::<Arc<McpManager>>()
+        .ok_or_else(|| "McpManager not managed".to_string())?;
+
+    mcp_manager.reconnect_all(&settings).await;
+
+    Ok(servers)
+}
+
+/// 测试单个 MCP server 是否能正常连接（不注册到池，测试完毕立即断开）。
+/// 用于前端"测试连接"按钮。
+#[tauri::command]
+pub async fn test_mcp_server(
+    app: AppHandle,
+    server: ChatMcpServer,
+) -> Result<(), String> {
+    let mcp_manager = app
+        .try_state::<Arc<McpManager>>()
+        .ok_or_else(|| "McpManager not managed".to_string())?;
+
+    mcp_manager.test_connection(&server).await
+}

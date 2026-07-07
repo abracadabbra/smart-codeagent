@@ -6,7 +6,7 @@
 //! 参照 Kivio `mcp/manager.rs` + `mcp/registry.rs::list_enabled_tool_defs`，砍掉：
 //! - HTTP transport / OAuth（Phase 3.1 不做）
 //! - idle reaper（Phase 3.1 不做，退出钩子兜底）
-//! - 配置指纹热重建（冷加载策略，改配置需重启 app）
+//! - 配置指纹热重建（Phase 3.3 实现热重载：reconnect_all + Settings 重新加载）
 
 use std::{
     collections::HashMap,
@@ -227,6 +227,37 @@ impl McpManager {
     pub async fn list_server_states(&self) -> HashMap<String, McpServerState> {
         let states = self.states.lock().expect("states mutex poisoned");
         states.clone()
+    }
+
+    /// 根据新 settings 重新连接所有 server。
+    /// 步骤：
+    /// 1. 断开所有现有连接（清空 clients 池 + emit Disconnected）
+    /// 2. 按新 settings 初始化并握手（注册到池 + emit Connecting/Connected）
+    /// 3. 返回新的工具列表（供下次 LLM 请求使用）
+    pub async fn reconnect_all(&self, settings: &Settings) -> Vec<ChatToolDefinition> {
+        self.disconnect_all().await;
+        self.list_all_tools(settings).await
+    }
+
+    /// 断开指定 server（从池移除 + emit Disconnected）。
+    pub async fn disconnect_server(&self, server_id: &str) {
+        let client = {
+            let mut clients = self.clients.lock().await;
+            clients.remove(server_id)
+        };
+        if let Some(client) = client {
+            client.disconnect().await;
+            self.sink.emit_disconnected(server_id);
+        }
+    }
+
+    /// 测试单个 server 是否能正常连接（不注册到池，测试完毕立即断开）。
+    /// 用于前端"测试连接"按钮。
+    pub async fn test_connection(&self, server: &ChatMcpServer) -> Result<(), String> {
+        let client = StdioMcpClient::new(server.clone(), self.sink.clone(), self.timeout_ms);
+        client.list_tools().await?;
+        client.disconnect().await;
+        Ok(())
     }
 }
 

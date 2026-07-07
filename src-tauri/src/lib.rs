@@ -19,7 +19,7 @@ use crate::agent::host_impl::TauriHost;
 use crate::ipc::commands::{
     answer_ask_user, approve_tool, cancel_run, get_session_state, list_active_sessions,
     force_reset_session, list_mcp_server_states,
-    list_mcp_servers, send_message,
+    list_mcp_servers, save_settings, reload_settings, test_mcp_server, send_message,
 };
 use crate::mcp::McpManager;
 use crate::session::commands::{
@@ -93,6 +93,9 @@ pub fn run() {
             // Phase 3.1 MCP 命令
             list_mcp_servers,
             list_mcp_server_states,
+            save_settings,
+            reload_settings,
+            test_mcp_server,
             // Phase 3.2 会话管理命令
             create_session,
             list_sessions,

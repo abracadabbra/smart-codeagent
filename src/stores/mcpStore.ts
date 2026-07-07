@@ -1,39 +1,112 @@
-// MCP server 状态 store。
-//
-// 启动时调 initMcpStore() 拉一次 list_mcp_servers + list_mcp_server_states；
-// 之后由 useAgentEvents 订阅 mcp-server-state 事件增量更新。
-
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { ChatMcpServer, McpServerState } from "@/types/mcp";
 
 interface McpStoreState {
-  /** 配置的所有 MCP server（来自 settings.json）。 */
   servers: ChatMcpServer[];
-  /** server_id -> 连接状态快照。未在 map 中的 server 视作 Disconnected。 */
   states: Record<string, McpServerState>;
+  loading: boolean;
+  saving: boolean;
+  showSettings: boolean;
 
   setServers: (servers: ChatMcpServer[]) => void;
   setState: (serverId: string, state: McpServerState) => void;
   replaceStates: (states: Record<string, McpServerState>) => void;
   clear: () => void;
+  setLoading: (loading: boolean) => void;
+  setSaving: (saving: boolean) => void;
+  setShowSettings: (show: boolean) => void;
+
+  addServer: (server: ChatMcpServer) => Promise<void>;
+  updateServer: (id: string, updates: Partial<ChatMcpServer>) => Promise<void>;
+  deleteServer: (id: string) => Promise<void>;
+  toggleServerEnabled: (id: string) => Promise<void>;
+  saveSettings: () => Promise<void>;
+  reloadSettings: () => Promise<void>;
+  testServer: (server: ChatMcpServer) => Promise<void>;
 }
 
-export const useMcpStore = create<McpStoreState>((set) => ({
+export const useMcpStore = create<McpStoreState>((set, get) => ({
   servers: [],
   states: {},
+  loading: false,
+  saving: false,
+  showSettings: false,
 
   setServers: (servers) => set({ servers }),
   setState: (serverId, state) =>
     set((s) => ({ states: { ...s.states, [serverId]: state } })),
   replaceStates: (states) => set({ states }),
   clear: () => set({ servers: [], states: {} }),
+  setLoading: (loading) => set({ loading }),
+  setSaving: (saving) => set({ saving }),
+  setShowSettings: (show) => set({ showSettings: show }),
+
+  addServer: async (server) => {
+    const servers = [...get().servers, server];
+    await saveSettingsToBackend(servers);
+    await get().reloadSettings();
+  },
+
+  updateServer: async (id, updates) => {
+    const servers = get().servers.map((s) =>
+      s.id === id ? { ...s, ...updates } : s,
+    );
+    await saveSettingsToBackend(servers);
+    await get().reloadSettings();
+  },
+
+  deleteServer: async (id) => {
+    const servers = get().servers.filter((s) => s.id !== id);
+    await saveSettingsToBackend(servers);
+    await get().reloadSettings();
+  },
+
+  toggleServerEnabled: async (id) => {
+    const servers = get().servers.map((s) =>
+      s.id === id ? { ...s, enabled: !s.enabled } : s,
+    );
+    await saveSettingsToBackend(servers);
+    await get().reloadSettings();
+  },
+
+  saveSettings: async () => {
+    set({ saving: true });
+    try {
+      await saveSettingsToBackend(get().servers);
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  reloadSettings: async () => {
+    set({ loading: true });
+    try {
+      const [servers, states] = await Promise.all([
+        invoke<ChatMcpServer[]>("list_mcp_servers"),
+        invoke<Record<string, McpServerState>>("list_mcp_server_states"),
+      ]);
+      set({ servers, states });
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  testServer: async (server) => {
+    await invoke("test_mcp_server", { server });
+  },
 }));
 
-/**
- * 启动时拉取一次 server 列表 + 状态快照。
- * 在 Tauri 环境外（vite dev 单独跑）静默失败。
- */
+async function saveSettingsToBackend(servers: ChatMcpServer[]) {
+  await invoke("save_settings", {
+    settings: {
+      mcp: {
+        servers,
+      },
+    },
+  });
+}
+
 export async function initMcpStore() {
   try {
     const [servers, states] = await Promise.all([

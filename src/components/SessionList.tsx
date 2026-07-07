@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { SessionItem } from "./SessionItem";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useMcpStore } from "@/stores/mcpStore";
 
 /**
  * 左侧项目/Quest 风格会话列表。
@@ -28,6 +29,7 @@ export function SessionList() {
   const searchQuery = useSessionStore((s) => s.searchQuery);
   const setSearchQuery = useSessionStore((s) => s.setSearchQuery);
   const createSession = useSessionStore((s) => s.createSession);
+  const setShowSettings = useMcpStore((s) => s.setShowSettings);
 
   const filtered = useMemo(() => {
     if (!searchQuery.trim()) return sessions;
@@ -160,7 +162,7 @@ export function SessionList() {
                 <line x1="12" y1="17" x2="12.01" y2="17" />
               </svg>
             </button>
-            <button className="p-1.5 rounded-md text-ink-500 hover:bg-ink-800 hover:text-ink-200 transition-colors" title="Settings">
+            <button className="p-1.5 rounded-md text-ink-500 hover:bg-ink-800 hover:text-ink-200 transition-colors" title="Settings" onClick={() => setShowSettings(true)}>
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="12" r="3" />
                 <path d="M12 1v6m0 6v6m4.22-10.22l4.24-4.24M6.34 6.34L2.1 2.1m17.9 10.9h-6m-6 0H1.9m17.8 0h.01M16.24 17.66l4.24 4.24M6.34 17.66l-4.24 4.24" />

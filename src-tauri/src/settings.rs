@@ -3,8 +3,8 @@
 //! Phase 3.1 仅承载 MCP server 配置；Provider / API Key 仍走 .env（`config.rs`）。
 //! 文件位置：`<app_data_dir>/settings.json`，macOS = `~/Library/Application Support/com.shentao.smartcodeagent/`。
 //!
-//! 加载策略（Q2 决策）：**冷加载**——启动时读一次入内存，用户改文件需重启 app 生效。
-//! 不引入 fs watcher，不暴露 reload 命令（留 Phase 3.3 设置面板）。
+//! 加载策略（Q2 决策）：启动时读一次入内存。Phase 3.3 设置面板支持热重载——
+//! 用户修改配置后调用 `reload_from_disk` + McpManager 重新连接，无需重启 app。
 //!
 //! 设计参考 Kivio `settings_loader.rs` + `settings.rs::ChatMcpServer`，砍掉了 OAuth /
 //! connector / HTTP transport / headers / connector_id / auth 字段（Phase 3.1 stdio-only）。
@@ -156,6 +156,39 @@ impl Settings {
     /// 返回 settings.json 应当写入的路径（生产代码用）。
     pub fn settings_path(app: &AppHandle) -> Option<PathBuf> {
         app.path().app_data_dir().ok().map(|d| d.join("settings.json"))
+    }
+
+    /// 写入 settings.json。先创建目录（确保存在），然后序列化写入。
+    /// 返回 Err 表示路径获取失败或写入失败。
+    pub fn save_to_disk(&self, app: &AppHandle) -> Result<(), String> {
+        let path = match Self::settings_path(app) {
+            Some(p) => p,
+            None => return Err("app_data_dir 不可用".to_string()),
+        };
+
+        if let Some(parent) = path.parent() {
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                return Err(format!("创建目录失败: {err}"));
+            }
+        }
+
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("序列化失败: {e}"))?;
+
+        std::fs::write(&path, json)
+            .map_err(|e| format!("写入 settings.json 失败 ({:?}): {e}", path))?;
+
+        Ok(())
+    }
+
+    /// 从磁盘重新加载（用于热重载）。当前实例被覆盖为磁盘上的最新配置。
+    pub fn reload_from_disk(&mut self, app: &AppHandle) {
+        *self = Self::load_from_disk(app);
+    }
+
+    /// 从指定路径重新加载（unit test 用）。
+    pub fn reload_from_path(&mut self, path: &Path) {
+        *self = Self::load_from_path(path);
     }
 }
 
@@ -373,5 +406,66 @@ mod tests {
         assert_eq!(back.mcp.servers.len(), 1);
         assert_eq!(back.mcp.servers[0].id, "fs");
         assert_eq!(back.mcp.servers[0].command, "npx");
+    }
+
+    #[test]
+    fn save_to_path_and_load_back() {
+        let dir = std::env::temp_dir().join(format!("smart-codeagent-save-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("settings.json");
+
+        let original = Settings {
+            mcp: McpSettings {
+                servers: vec![ChatMcpServer {
+                    id: "fs".into(),
+                    name: "Filesystem".into(),
+                    enabled: true,
+                    transport: "stdio".into(),
+                    command: "npx".into(),
+                    args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into()],
+                    env: HashMap::new(),
+                    cwd: None,
+                    enabled_tools: Vec::new(),
+                }],
+            },
+        };
+
+        std::fs::write(&path, serde_json::to_string_pretty(&original).unwrap())
+            .expect("write settings");
+
+        let loaded = Settings::load_from_path(&path);
+        assert_eq!(loaded.mcp.servers.len(), 1);
+        assert_eq!(loaded.mcp.servers[0].id, "fs");
+        assert_eq!(loaded.mcp.servers[0].command, "npx");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reload_from_disk_updates_instance() {
+        let dir = std::env::temp_dir().join(format!("smart-codeagent-reload-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("settings.json");
+
+        let mut settings = Settings::default();
+        assert!(settings.mcp.servers.is_empty());
+
+        std::fs::write(
+            &path,
+            r#"{
+                "mcp": {
+                    "servers": [
+                        { "id": "fs", "name": "FS", "command": "npx" }
+                    ]
+                }
+            }"#,
+        )
+        .expect("write settings");
+
+        settings.reload_from_path(&path);
+        assert_eq!(settings.mcp.servers.len(), 1);
+        assert_eq!(settings.mcp.servers[0].id, "fs");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
