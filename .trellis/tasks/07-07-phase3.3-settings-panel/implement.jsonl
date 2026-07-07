@@ -1,1 +1,9 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/ipc-contracts.md", "reason": "新增 save_settings / reload_settings / test_mcp_server 命令，payload 命名遵循 camelCase 约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "settings 保存失败返回 Err 字符串，不 panic；MCP 测试连接失败向上传递错误"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "settings 模块使用 tracing::warn! 记录文件读写失败"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "settings 模块新增 2 个单测（save_to_path_and_load_back / reload_from_disk_updates_instance）"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "SettingsPanel / McpServerForm 遵循函数式组件 + TypeScript + 组合优先模式"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "mcpStore 扩展 CRUD actions，使用 Zustand，与现有 store 架构一致"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Settings 相关类型与 Rust 端 serde 格式对齐（camelCase）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "设置面板涉及 Rust 后端 IPC 命令 + 前端 Zustand store + UI 组件三层"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 McpManager 现有工具列表/调用基础设施，不重复造轮子"}

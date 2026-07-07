@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/ipc-contracts.md", "reason": "新增 IPC 命令命名（snake_case Rust → camelCase wire）与现有风格一致；Settings payload 序列化对齐"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "保存失败 / 重载失败 / 测试连接失败都走 Result<String>，不 panic；前端捕获显示"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "175 个 lib 测试全绿；cargo check 干净无新 warning"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "ChatMcpServer / McpServerState 类型与 Rust 端逐字段对齐（camelCase + enum kind tag）"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "mcpStore 状态变更走 action 函数，不直接修改 state；事件增量更新 + 启动全量拉取"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "三层数据流贯通：前端 action → IPC invoke → Rust 命令 → 磁盘持久化/MCP 重连 → 事件回推前端"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 McpManager::list_all_tools / disconnect_all 实现 reconnect_all；复用 StdioMcpClient 实现 test_connection"}
