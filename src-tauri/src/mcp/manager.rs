@@ -136,6 +136,9 @@ impl McpManager {
     ///
     /// 单 server 失败：`tracing::warn!` 跳过，不影响其他 server。空 servers → 空 Vec。
     /// `enabled_tools` 非空时只保留列出的工具（白名单过滤）。
+    ///
+    /// **保证**：所有成功握手的 client 会注册到 `self.clients` 池中，后续 `call_tool`
+    /// 能按 server_id 找到同一 client（复用持久会话）。
     pub async fn list_all_tools(&self, settings: &Settings) -> Vec<ChatToolDefinition> {
         let enabled: Vec<ChatMcpServer> = settings
             .mcp
@@ -149,34 +152,35 @@ impl McpManager {
             return Vec::new();
         }
 
-        // 并发拉取：每个 server 一个 future，失败返回空 Vec。
-        let futures: Vec<_> = enabled
+        // 先顺序初始化所有 client 并注册到池。
+        // `get_or_init_client` 锁持有极短（仅 HashMap entry + clone Arc），顺序调用无性能问题。
+        // 这样保证后续 `call_tool` 能按 server_id 找到同一 client，复用持久会话。
+        let clients: Vec<(ChatMcpServer, Arc<StdioMcpClient>)> = Vec::with_capacity(enabled.len());
+        let mut clients = clients;
+        for server in enabled {
+            let client = self.get_or_init_client(&server).await;
+            clients.push((server, client));
+        }
+
+        // 并发拉取工具列表（client 已池化，此处不持 self.clients 锁）。
+        let futures: Vec<_> = clients
             .into_iter()
-            .map(|server| {
-                let sink = self.sink.clone();
-                let timeout_ms = self.timeout_ms;
-                async move {
-                    let client = Arc::new(StdioMcpClient::new(server.clone(), sink, timeout_ms));
-                    // 注册到池（若已存在则用旧的，避免重复创建）。
-                    // 这里不调 get_or_init_client 是为了避免在 async closure 里持锁跨 await。
-                    // 实际上 get_or_init_client 内部锁很短，但为了并发性，这里直接创建临时 client。
-                    // Round 5 会改为先 get_or_init_client 再 list_tools。
-                    match client.list_tools().await {
-                        Ok(tools) => {
-                            let filtered = filter_tools(&server, tools);
-                            filtered
-                                .into_iter()
-                                .map(|t| tool_definition_from_mcp(&server, t))
-                                .collect::<Vec<_>>()
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                "MCP server {} list_tools failed, skipping: {}",
-                                server.id,
-                                err
-                            );
-                            Vec::new()
-                        }
+            .map(|(server, client)| async move {
+                match client.list_tools().await {
+                    Ok(tools) => {
+                        let filtered = filter_tools(&server, tools);
+                        filtered
+                            .into_iter()
+                            .map(|t| tool_definition_from_mcp(&server, t))
+                            .collect::<Vec<_>>()
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "MCP server {} list_tools failed, skipping: {}",
+                            server.id,
+                            err
+                        );
+                        Vec::new()
                     }
                 }
             })
@@ -438,28 +442,15 @@ while True:
     #[tokio::test]
     async fn manager_call_tool_routes_to_correct_client() {
         // 2 个 server，各暴露 echo 工具；call_tool 按 server_id 路由到正确的 client。
+        // list_all_tools 会通过 get_or_init_client 把 client 注册到池，call_tool 能直接复用。
         let (s1, script1) = make_server("srv1", "echo");
         let (s2, script2) = make_server("srv2", "echo");
-        let settings = settings_with(vec![s1.clone(), s2.clone()]);
+        let settings = settings_with(vec![s1, s2]);
         let manager = McpManager::new_with_sink(Arc::new(()), 5_000);
 
-        // 先 list_all_tools 初始化两个 client。
+        // list_all_tools 初始化 client 并注册到池。
         let defs = manager.list_all_tools(&settings).await;
         assert_eq!(defs.len(), 2);
-
-        // 注：list_all_tools 内部创建的是临时 client，没注册到池里。
-        // 这里手动通过 get_or_init_client 注册。
-        {
-            let mut clients = manager.clients.lock().await;
-            clients.insert(
-                s1.id.clone(),
-                Arc::new(StdioMcpClient::new(s1.clone(), manager.sink.clone(), 5_000)),
-            );
-            clients.insert(
-                s2.id.clone(),
-                Arc::new(StdioMcpClient::new(s2.clone(), manager.sink.clone(), 5_000)),
-            );
-        }
 
         let r1 = manager
             .call_tool("srv1", "echo", serde_json::json!({ "text": "from-srv1" }))
@@ -496,21 +487,13 @@ while True:
     async fn manager_list_server_states_caches_emitted_states() {
         // 连接一个 server → CachingSink 应把 Connecting/Connected 写入 states 缓存。
         let (server, script) = make_server("state-test", "echo");
-        let settings = settings_with(vec![server.clone()]);
+        let settings = settings_with(vec![server]);
         let manager = McpManager::new_with_sink(Arc::new(()), 5_000);
 
-        // 触发连接。
+        // list_all_tools 会初始化 client 并握手，CachingSink 记录状态。
         let _ = manager.list_all_tools(&settings).await;
 
-        // list_all_tools 用临时 client，没注册到池。手动注册一个并连接。
-        {
-            let mut clients = manager.clients.lock().await;
-            clients.insert(
-                server.id.clone(),
-                Arc::new(StdioMcpClient::new(server.clone(), manager.sink.clone(), 5_000)),
-            );
-        }
-        // 触发连接。
+        // 触发一次 call_tool 确保 handshake 完成（list_tools 已握手，这里验证池化复用）。
         let _ = manager
             .call_tool("state-test", "echo", serde_json::json!({ "text": "x" }))
             .await;
