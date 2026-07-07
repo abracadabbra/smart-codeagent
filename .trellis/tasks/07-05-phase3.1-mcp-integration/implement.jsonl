@@ -1,1 +1,9 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/ipc-contracts.md", "reason": "MCP IPC 命令与事件 payload 命名遵循 camelCase 约定（McpServerStatePayload 的 server_id → serverId）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "MCP server 启动失败 / tool call 失败走 tracing::warn! + 跳过，不 panic，符合 graceful degradation 原则"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "MCP 模块使用 tracing 记录连接状态、工具调用、错误信息，级别遵循规范"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "MCP 模块新增 45 个 unit test（types 18 + client 10 + manager 7 + settings 10），覆盖核心路径"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "StatusBar 组件遵循函数式组件 + TypeScript + 组合优先模式"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "mcpStore 使用 Zustand，与现有 chatStore / agentStore / sessionStore 一致"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "McpServerState / ChatMcpServer / McpServerStatePayload 类型与 Rust 端严格对齐"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "MCP 涉及 Rust 后端、Tauri IPC、前端状态三层，跨层事件 payload 已对齐"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "MCP tool 复用 native approval 流（host.request_tool_approval），不重复造轮子"}

@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/ipc-contracts.md", "reason": "MCP 事件名 mcp-server-state + payload serverId/state 遵循 camelCase 约定；list_mcp_servers / list_mcp_server_states 命令命名与现有风格一致"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "server 启动失败仅 warn + 跳过，不影响整轮；tool call 失败回 Err 给 LLM；死连接透明重连一次；所有路径不 panic"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "45 个 MCP 单测全绿 + 173 个全部 lib 测试全绿，无回归；cargo check 干净无新 warning"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "types/mcp.ts 中 McpServerState / ChatMcpServer / McpServerStatePayload 与 Rust 端 serde 格式逐字段对齐"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "mcpStore 用 Zustand，与 chatStore/agentStore/sessionStore 架构一致；事件增量更新 + 启动全量拉取"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "三层数据流贯通：Rust McpManager → Tauri emit → useAgentEvents 订阅 → mcpStore → StatusBar 渲染"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "MCP tool approval 完全复用 native request_tool_approval 路径；MCP tool result 复用 ToolOutput / ToolCallRecord 结构"}

@@ -15,7 +15,7 @@ src-tauri/src/
 │   ├── client.rs          StdioMcpClient + McpSession（持久会话 + reader_task）
 │   └── manager.rs         McpManager（多 server 协调 + McpServerState + EventSink）
 ├── agent/
-│   ├── loop_.rs           修改：prepare 阶段合并 MCP tools，dispatch 阶段路由 mcp__ 前缀
+│   ├── runner.rs          修改：prepare 阶段合并 MCP tools，dispatch 阶段路由 mcp__ 前缀
 │   └── rounds.rs          修改：dispatch_single 加 MCP 分支
 ├── ipc/
 │   └── commands.rs        修改：加 list_mcp_servers / list_mcp_server_states 命令
@@ -64,7 +64,7 @@ tauri::RunEvent::ExitRequested
 ### 2.2 单轮 LLM 请求流程（prepare 阶段）
 
 ```
-loop_.rs::run_round prepare
+runner.rs::run_round prepare
   ├── native_defs = ToolRegistry::definitions()
   ├── mcp_defs = mcp_manager.list_all_tools(&settings).await
   │     ├── for each enabled server:
@@ -143,7 +143,7 @@ StatusBar.tsx 读取 mcpStore，重渲染
 ```
 
 - `enabledTools: []` 表示全启用（与 Kivio 一致）。
-- 文件位置：`<app_data_dir>/settings.json`，macOS = `~/Library/Application Support/com.smart-codeagent.dev/settings.json`。
+- 文件位置：`<app_data_dir>/settings.json`，macOS = `~/Library/Application Support/com.shentao.smartcodeagent/settings.json`。
 
 ### 3.2 Tauri commands（新增 2 个）
 
@@ -272,7 +272,7 @@ interface McpServerStatePayload {
 
 - 实现分 6 个 round（见 implement.md），每个 round 独立可 commit。
 - 若某 round 出问题，`git reset --hard <prev_round_commit>` 即可回退到上一个稳定点。
-- 最坏情况：删 `mcp/` 整个目录 + 回滚 `loop_.rs` / `rounds.rs` / `lib.rs` 改动 → 回到 Phase 2 终态。
+- 最坏情况：删 `mcp/` 整个目录 + 回滚 `runner.rs` / `rounds.rs` / `lib.rs` 改动 → 回到 Phase 2 终态。
 
 ## 6. 风险点
 
