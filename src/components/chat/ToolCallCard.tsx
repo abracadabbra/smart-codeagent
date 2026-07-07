@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ToolCallRecord, ToolCallStatus } from "@/types/tool";
+import { FileDiff } from "../FileDiff";
 
 interface ToolCallCardProps {
   record: ToolCallRecord;
@@ -89,9 +90,17 @@ export function ToolCallCard({ record }: ToolCallCardProps) {
               <div className="text-ink-400 mb-1 text-[10px] uppercase tracking-wide">
                 result
               </div>
-              <pre className="bg-ink-900/80 rounded p-2 overflow-x-auto text-emerald-200/90 font-mono text-[11px] leading-relaxed max-h-48 overflow-y-auto">
-                {record.resultPreview}
-              </pre>
+              {(record.name === "write_file" || record.name === "edit_file") && record.structuredContent ? (
+                <FileDiff
+                  oldText={(record.structuredContent as any)?.oldContent}
+                  newText={(record.structuredContent as any)?.newContent}
+                  fileName={(record.structuredContent as any)?.file}
+                />
+              ) : (
+                <pre className="bg-ink-900/80 rounded p-2 overflow-x-auto text-emerald-200/90 font-mono text-[11px] leading-relaxed max-h-48 overflow-y-auto">
+                  {record.resultPreview}
+                </pre>
+              )}
             </div>
           )}
 

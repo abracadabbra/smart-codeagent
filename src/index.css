@@ -3,6 +3,25 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --ink-950: #08080a;
+    --ink-900: #111118;
+    --ink-800: #1a1a24;
+    --ink-700: #252530;
+    --ink-600: #3a3a4a;
+    --ink-500: #66667a;
+    --ink-400: #9999aa;
+    --ink-300: #ccccd6;
+    --ink-200: #e6e6eb;
+    --ink-100: #fafafa;
+    --brand-500: #3b82f6;
+    --brand-600: #2563eb;
+    --brand-700: #1d4ed8;
+    --success-500: #22c55e;
+    --error-500: #ef4444;
+    --warning-500: #f59e0b;
+  }
+
   html, body, #root {
     height: 100%;
   }
@@ -13,16 +32,28 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overscroll-behavior: none;
-    background: #08080a;
-    color: #e4e4e7;
+    background: var(--ink-950);
+    color: var(--ink-200);
+    transition: background 0.2s, color 0.2s;
   }
 
-  /* macOS Overlay titlebar: leave space for traffic lights */
+  body.light {
+    --ink-950: #fafafa;
+    --ink-900: #f0f0f5;
+    --ink-800: #e6e6eb;
+    --ink-700: #d6d6de;
+    --ink-600: #b0b0c0;
+    --ink-500: #7a7a90;
+    --ink-400: #505060;
+    --ink-300: #3a3a4a;
+    --ink-200: #252530;
+    --ink-100: #111118;
+  }
+
   .titlebar-safe {
     padding-left: 78px;
   }
 
-  /* Make the whole titlebar region draggable on macOS */
   [data-tauri-drag-region] {
     -webkit-app-region: drag;
     app-region: drag;
@@ -32,17 +63,16 @@
     app-region: no-drag;
   }
 
-  /* Minimal dark scrollbar */
   ::-webkit-scrollbar {
     width: 5px;
     height: 5px;
   }
   ::-webkit-scrollbar-thumb {
-    background: #27272a;
+    background: var(--ink-700);
     border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #3f3f46;
+    background: var(--ink-600);
   }
   ::-webkit-scrollbar-track {
     background: transparent;
@@ -58,13 +88,46 @@
   }
   .selection-brand::selection {
     background: rgba(59, 130, 246, 0.3);
-    color: #fafafa;
+    color: var(--ink-100);
   }
 }
 
-/* ── Markdown prose refinements ─────────────────────────────── */
+@layer components {
+  .bg-ink-950 { background-color: var(--ink-950); }
+  .bg-ink-900 { background-color: var(--ink-900); }
+  .bg-ink-800 { background-color: var(--ink-800); }
+  .bg-ink-700 { background-color: var(--ink-700); }
+  .bg-ink-600 { background-color: var(--ink-600); }
+  .bg-brand-500 { background-color: var(--brand-500); }
+  .bg-brand-600 { background-color: var(--brand-600); }
+  .bg-green-500\/10 { background-color: rgba(34, 197, 94, 0.1); }
+  .bg-red-500\/10 { background-color: rgba(239, 68, 68, 0.1); }
+  .bg-blue-500\/10 { background-color: rgba(59, 130, 246, 0.1); }
+  .bg-ink-800\/50 { background-color: rgba(26, 26, 36, 0.5); }
+
+  .text-ink-100 { color: var(--ink-100); }
+  .text-ink-200 { color: var(--ink-200); }
+  .text-ink-300 { color: var(--ink-300); }
+  .text-ink-400 { color: var(--ink-400); }
+  .text-ink-500 { color: var(--ink-500); }
+  .text-ink-600 { color: var(--ink-600); }
+  .text-brand-500 { color: var(--brand-500); }
+  .text-green-400 { color: var(--success-500); }
+  .text-red-400 { color: var(--error-500); }
+  .text-blue-400 { color: var(--brand-500); }
+  .text-amber-400 { color: var(--warning-500); }
+
+  .border-ink-900 { border-color: var(--ink-900); }
+  .border-ink-800 { border-color: var(--ink-800); }
+  .border-ink-700 { border-color: var(--ink-700); }
+  .border-ink-600 { border-color: var(--ink-600); }
+  .border-brand-500 { border-color: var(--brand-500); }
+  .border-dashed { border-style: dashed; }
+
+  .placeholder-ink-600::placeholder { color: var(--ink-600); }
+}
+
 .markdown-body {
-  /* nested list indentation */
   ul ul,
   ol ol,
   ul ol,
@@ -73,7 +136,6 @@
     margin-bottom: 4px;
   }
 
-  /* tighter list markers */
   li > p:first-child {
     margin-top: 0;
   }
@@ -81,13 +143,12 @@
     margin-bottom: 0;
   }
 
-  /* task list checkboxes (GFM) */
   input[type="checkbox"] {
     appearance: none;
     display: inline-block;
     width: 14px;
     height: 14px;
-    border: 1.5px solid #52525b;
+    border: 1.5px solid var(--ink-600);
     border-radius: 3px;
     margin-right: 6px;
     vertical-align: middle;
@@ -96,8 +157,8 @@
     cursor: pointer;
   }
   input[type="checkbox"]:checked {
-    background: #3b82f6;
-    border-color: #3b82f6;
+    background: var(--brand-500);
+    border-color: var(--brand-500);
   }
   input[type="checkbox"]:checked::after {
     content: "";
@@ -111,18 +172,15 @@
     transform: rotate(45deg);
   }
 
-  /* task list: no bullet */
   li:has(> input[type="checkbox"]) {
     list-style: none;
     margin-left: -18px;
   }
 
-  /* code inside list items */
   li code {
     word-break: break-word;
   }
 
-  /* avoid double margin between consecutive code blocks & paragraphs */
   p + div[class*="relative"],
   p + div:has(> [class*="language-"]) {
     margin-top: 0;

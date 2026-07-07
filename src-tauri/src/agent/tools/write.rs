@@ -65,11 +65,19 @@ impl Tool for WriteTool {
             }
 
             let bytes = args.content.as_bytes();
+
+            let old_content = std::fs::read_to_string(&resolved).ok();
+
             std::fs::write(&resolved, bytes).map_err(ToolError::Io)?;
 
             Ok(ToolOutput {
                 content: format!("wrote {} bytes to {}", bytes.len(), resolved.display()),
-                structured: Some(serde_json::json!({ "bytes_written": bytes.len() })),
+                structured: Some(serde_json::json!({
+                    "bytes_written": bytes.len(),
+                    "file": resolved.to_string_lossy().to_string(),
+                    "oldContent": old_content,
+                    "newContent": args.content,
+                })),
                 artifacts: vec![resolved.to_string_lossy().to_string()],
                 truncated: false,
             })

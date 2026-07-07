@@ -93,7 +93,12 @@ impl Tool for EditTool {
                     if args.replace_all { count } else { 1 },
                     resolved.display()
                 ),
-                structured: Some(serde_json::json!({ "replacements": if args.replace_all { count } else { 1 } })),
+                structured: Some(serde_json::json!({
+                    "replacements": if args.replace_all { count } else { 1 },
+                    "file": resolved.to_string_lossy().to_string(),
+                    "oldContent": original,
+                    "newContent": updated,
+                })),
                 artifacts: vec![resolved.to_string_lossy().to_string()],
                 truncated: false,
             })

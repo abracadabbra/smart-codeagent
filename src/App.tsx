@@ -12,6 +12,7 @@ import { useChatStore } from "@/stores/chatStore";
 import { useAgentStore } from "@/stores/agentStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useMcpStore } from "@/stores/mcpStore";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 
 export function App() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -19,6 +20,7 @@ export function App() {
   const setActiveAgentConversation = useAgentStore((s) => s.setActiveConversation);
   const showSettings = useMcpStore((s) => s.showSettings);
   const setShowSettings = useMcpStore((s) => s.setShowSettings);
+  const createSession = useSessionStore((s) => s.createSession);
 
   useEffect(() => {
     initSessionStore();
@@ -28,6 +30,17 @@ export function App() {
     setActiveChatConversation(activeSessionId);
     setActiveAgentConversation(activeSessionId);
   }, [activeSessionId, setActiveChatConversation, setActiveAgentConversation]);
+
+  useKeyboardShortcuts({
+    onCmdK: () => {
+      createSession();
+    },
+    onEsc: () => {
+      if (showSettings) {
+        setShowSettings(false);
+      }
+    },
+  });
 
   return (
     <div className="flex flex-col h-screen bg-ink-950 text-ink-100 relative">

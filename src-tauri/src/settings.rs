@@ -22,6 +22,12 @@ use tracing::warn;
 pub struct Settings {
     #[serde(default)]
     pub mcp: McpSettings,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "dark".to_string()
 }
 
 /// MCP server 列表容器。

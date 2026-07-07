@@ -20,6 +20,7 @@ use crate::ipc::commands::{
     answer_ask_user, approve_tool, cancel_run, get_session_state, list_active_sessions,
     force_reset_session, list_mcp_server_states,
     list_mcp_servers, save_settings, reload_settings, test_mcp_server, send_message,
+    get_settings,
 };
 use crate::mcp::McpManager;
 use crate::session::commands::{
@@ -96,6 +97,7 @@ pub fn run() {
             save_settings,
             reload_settings,
             test_mcp_server,
+            get_settings,
             // Phase 3.2 会话管理命令
             create_session,
             list_sessions,

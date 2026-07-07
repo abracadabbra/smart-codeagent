@@ -175,7 +175,16 @@ pub async fn run_agent_loop(
     emit_status(app.as_ref(), &conv_id, AgentState::Prepare);
 
     // 2. 构造 provider + tool registry
-    let anthropic_cfg = AnthropicConfig::from_env();
+    let anthropic_cfg = match AnthropicConfig::from_env() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            let msg = format!("配置错误: {e}. 请在设置中配置 LLM_API_KEY 或在 .env 文件中设置.");
+            emit_error(app.as_ref(), &conv_id, &assistant_id, &msg);
+            app_state.set_session_state(&conv_id, AgentState::Idle);
+            emit_status(app.as_ref(), &conv_id, AgentState::Idle);
+            return Err(msg);
+        }
+    };
     let provider = AnthropicClient::new(anthropic_cfg);
     let tools = build_tool_registry();
     let mut tool_defs = tools.definitions();

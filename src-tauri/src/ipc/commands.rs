@@ -346,3 +346,17 @@ pub async fn test_mcp_server(
 
     mcp_manager.test_connection(&server).await
 }
+
+/// 获取完整 settings 配置（用于前端读取 theme 等全局设置）。
+#[tauri::command]
+pub async fn get_settings(
+    app: AppHandle,
+) -> Result<String, String> {
+    let settings_state = app
+        .try_state::<Arc<Mutex<Settings>>>()
+        .ok_or_else(|| "Settings not managed".to_string())?;
+
+    let settings = settings_state.lock().await.clone();
+    serde_json::to_string(&settings)
+        .map_err(|e| format!("序列化 settings 失败: {e}"))
+}
