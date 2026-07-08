@@ -142,33 +142,22 @@ export function SessionList() {
         )}
       </div>
 
-      {/* 底部用户区 */}
+      {/* 底部操作区 */}
       <div className="p-3 border-t border-ink-900">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center text-[10px] font-bold text-white shrink-0">
-              涛
-            </div>
-            <div className="min-w-0">
-              <div className="text-xs font-medium text-ink-200 truncate">涛 沈</div>
-              <div className="text-[10px] text-ink-500 truncate">Teams</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-0.5">
-            <button className="p-1.5 rounded-md text-ink-500 hover:bg-ink-800 hover:text-ink-200 transition-colors" title="Help">
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-            </button>
-            <button className="p-1.5 rounded-md text-ink-500 hover:bg-ink-800 hover:text-ink-200 transition-colors" title="Settings" onClick={() => setShowSettings(true)}>
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M12 1v6m0 6v6m4.22-10.22l4.24-4.24M6.34 6.34L2.1 2.1m17.9 10.9h-6m-6 0H1.9m17.8 0h.01M16.24 17.66l4.24 4.24M6.34 17.66l-4.24 4.24" />
-              </svg>
-            </button>
-          </div>
+        <div className="flex items-center justify-end gap-0.5">
+          <button className="p-1.5 rounded-md text-ink-500 hover:bg-ink-800 hover:text-ink-200 transition-colors" title="Help">
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          </button>
+          <button className="p-1.5 rounded-md text-ink-500 hover:bg-ink-800 hover:text-ink-200 transition-colors" title="Settings" onClick={() => setShowSettings(true)}>
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 1v6m0 6v6m4.22-10.22l4.24-4.24M6.34 6.34L2.1 2.1m17.9 10.9h-6m-6 0H1.9m17.8 0h.01M16.24 17.66l4.24 4.24M6.34 17.66l-4.24 4.24" />
+            </svg>
+          </button>
         </div>
       </div>
     </aside>
