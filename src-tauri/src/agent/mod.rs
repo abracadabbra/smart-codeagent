@@ -23,6 +23,10 @@ pub enum AgentState {
     Synthesis,
     /// 无 tool 的纯文本对话（Phase 2 stub，等同 Stream 但语义清晰）
     Plain,
+    /// LLM 请求失败后退避重试中（Phase 5.4 错误恢复）。
+    RetryBackoff,
+    /// 上下文窗口溢出，正在裁剪历史后重试（Phase 5.4 错误恢复）。
+    TrimContext,
 }
 
 impl AgentState {
@@ -35,6 +39,8 @@ impl AgentState {
             AgentState::ToolLoop => "ToolLoop",
             AgentState::Synthesis => "Synthesis",
             AgentState::Plain => "Plain",
+            AgentState::RetryBackoff => "RetryBackoff",
+            AgentState::TrimContext => "TrimContext",
         }
     }
 }
@@ -117,8 +123,10 @@ impl Message {
     }
 }
 
+pub mod context;
 pub mod host;
 pub mod host_impl;
+pub mod recovery;
 pub mod rounds;
 pub mod runner;
 pub mod tools;

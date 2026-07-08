@@ -2,8 +2,49 @@ import { useEffect, useRef, useMemo } from "react";
 import { useChatStore } from "@/stores/chatStore";
 import { useAgentStore } from "@/stores/agentStore";
 import { useSessionStore } from "@/stores/sessionStore";
-import { MessageBubble } from "./MessageBubble";
+import type { AgentState } from "@/types/agent";
+import { VirtualMessageList } from "./VirtualMessageList";
+import type { VirtualMessageListHandle } from "./VirtualMessageList";
 import { InputBar } from "./InputBar";
+import { SearchBar } from "./SearchBar";
+
+function stateLabel(state: AgentState): string {
+  switch (state) {
+    case "Prepare":
+      return "准备中";
+    case "ToolLoop":
+      return "工具调用中";
+    case "Stream":
+      return "流式输出中";
+    case "Synthesis":
+      return "合成中";
+    case "Plain":
+      return "生成中";
+    case "RetryBackoff":
+      return "请求失败，退避重试中";
+    case "TrimContext":
+      return "上下文过长，裁剪历史后重试";
+    case "Stop":
+      return "停止中";
+    case "Idle":
+    default:
+      return "就绪";
+  }
+}
+
+function stateColor(state: AgentState): string {
+  switch (state) {
+    case "Stream":
+      return "bg-brand-500 animate-pulse";
+    case "RetryBackoff":
+    case "TrimContext":
+      return "bg-yellow-400 animate-pulse";
+    case "Idle":
+      return "bg-ink-500";
+    default:
+      return "bg-amber-500";
+  }
+}
 
 export function ChatView() {
   const messages = useChatStore((s) => s.messages);
@@ -17,42 +58,51 @@ export function ChatView() {
     [sessions, activeSessionId],
   );
 
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<VirtualMessageListHandle>(null);
+  const searchCurrentIndex = useChatStore((s) => s.searchCurrentIndex);
+  const searchResults = useChatStore((s) => s.searchResults);
+
   // 只在消息数量变化或会话切换时滚动到底部，避免每个 token 都触发滚动
   const messageCount = messages.length;
   const lastMessageStatus = messages[messageCount - 1]?.status ?? "";
 
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    const list = listRef.current;
+    if (!list) return;
     requestAnimationFrame(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+      list.scrollToBottom("auto");
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [messageCount, activeSessionId]);
 
   // 流式输出时，只在消息状态变化（如 pending→streaming→complete）时滚动，而非每个 token
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    const list = listRef.current;
+    if (!list) return;
     requestAnimationFrame(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      list.scrollToBottom("smooth");
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [lastMessageStatus]);
+
+  // 搜索当前项变化时，滚动到对应消息
+  const scrollToIndex =
+    searchCurrentIndex >= 0 && searchResults.length > 0
+      ? searchResults[searchCurrentIndex]
+      : null;
 
   const hasMessages = messages.length > 0;
 
   return (
     <div className="flex flex-col h-full bg-ink-950 relative">
       {/* 对话区：没有消息时显示中央空态 */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto relative">
+      <div className="flex-1 overflow-y-auto relative">
         {activeSession && hasMessages ? (
-          <div className="px-6 py-5">
-            {messages.map((m) => (
-              <MessageBubble key={m.id} message={m} />
-            ))}
-          </div>
+          <VirtualMessageList
+            ref={listRef}
+            messages={messages}
+            scrollToIndex={scrollToIndex}
+          />
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center px-6 animate-fade-in">
             {/* 大 Logo / 星球图标 */}
@@ -116,20 +166,19 @@ export function ChatView() {
       {/* 底部输入卡片 */}
       <InputBar />
 
+      {/* 消息搜索栏 */}
+      <SearchBar />
+
       {/* 简洁状态提示 */}
       {hasMessages && (
         <div className="absolute top-4 right-4 flex items-center gap-2 text-[11px] text-ink-500">
           <span
             className={[
               "inline-block w-1.5 h-1.5 rounded-full",
-              agentState === "Idle"
-                ? "bg-ink-500"
-                : agentState === "Stream"
-                  ? "bg-brand-500 animate-pulse"
-                  : "bg-amber-500",
+              stateColor(agentState),
             ].join(" ")}
           />
-          <span>{agentState}</span>
+          <span>{stateLabel(agentState)}</span>
         </div>
       )}
     </div>

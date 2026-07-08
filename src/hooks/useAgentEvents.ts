@@ -133,7 +133,7 @@ export function useAgentEvents() {
               const agentStore = useAgentStore.getState();
               const sessionStore = useSessionStore.getState();
               const activeId = sessionStore.activeSessionId;
-              // eslint-disable-next-line no-console
+               
               console.log("[approval_request] conv=", p.conversationId, "active=", activeId, "agentActive=", agentStore.activeConversationId, "tool=", p.toolName);
               // 注册 pending（分桶）
               agentStore.setApprovalRequestFor(p.conversationId, p);
@@ -286,7 +286,7 @@ export function useAgentEvents() {
         }
       } catch (err) {
         // 非 Tauri 环境（vite dev 单独跑）下，invoke/listen 不可用，静默忽略
-        // eslint-disable-next-line no-console
+         
         console.warn("[useAgentEvents] Tauri APIs unavailable:", err);
       }
     })();

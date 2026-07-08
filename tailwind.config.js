@@ -4,26 +4,26 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Deep dark UI tokens matching the Qoder/Quest screenshot
+        // 使用 CSS 变量，支持 body.light 切换亮色主题
         ink: {
-          50: "#fafafa",
-          100: "#f4f4f5",
-          200: "#e4e4e7",
-          300: "#a1a1aa",
-          400: "#71717a",
-          500: "#52525b",
-          600: "#3f3f46",
-          700: "#27272a",
-          800: "#18181b",
-          850: "#121216",
-          900: "#0c0c0f",
-          950: "#08080a",
+          50: "var(--ink-100)",
+          100: "var(--ink-100)",
+          200: "var(--ink-200)",
+          300: "var(--ink-300)",
+          400: "var(--ink-400)",
+          500: "var(--ink-500)",
+          600: "var(--ink-600)",
+          700: "var(--ink-700)",
+          800: "var(--ink-800)",
+          850: "var(--ink-850)",
+          900: "var(--ink-900)",
+          950: "var(--ink-950)",
         },
         surface: {
-          DEFAULT: "#0c0c0f",
-          raised: "#121216",
-          overlay: "#18181b",
-          hover: "#1f1f23",
+          DEFAULT: "var(--ink-900)",
+          raised: "var(--ink-850)",
+          overlay: "var(--ink-800)",
+          hover: "var(--ink-700)",
         },
         brand: {
           400: "#60a5fa",
@@ -31,7 +31,7 @@ export default {
           600: "#2563eb",
         },
         accent: {
-          DEFAULT: "#22c55e", // screenshot green send button
+          DEFAULT: "#22c55e",
           hover: "#16a34a",
         },
       },

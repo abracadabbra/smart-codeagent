@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tracing::warn;
 
-/// 顶层 settings.json 结构。Phase 3.1 仅含 `mcp` 字段；Phase 3.3 会加 provider / workspace 等。
+/// 顶层 settings.json 结构。Phase 3.1 仅含 `mcp` 字段；Phase 5.3 加入 provider 配置。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -24,10 +24,54 @@ pub struct Settings {
     pub mcp: McpSettings,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default)]
+    pub provider: ProviderConfig,
 }
 
-fn default_theme() -> String {
+pub(crate) fn default_theme() -> String {
     "dark".to_string()
+}
+
+/// LLM Provider 配置。Phase 5.3 起支持在 settings.json / UI 中配置，
+/// 不再强制依赖 .env。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderConfig {
+    /// Provider 标识。当前仅支持 "openai-compatible"（OpenAI Chat Completions 兼容协议）。
+    pub provider: String,
+    /// API Key（Bearer token）。
+    pub api_key: String,
+    /// API Base URL，不含 /v1/chat/completions 后缀。
+    pub base_url: String,
+    /// 模型名。
+    pub model: String,
+    /// 每次请求 max_tokens。
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    /// 上下文窗口 token 上限（输入消息 + system prompt）。
+    #[serde(default = "default_context_window_tokens")]
+    pub context_window_tokens: u32,
+}
+
+impl Default for ProviderConfig {
+    fn default() -> Self {
+        Self {
+            provider: "openai-compatible".to_string(),
+            api_key: String::new(),
+            base_url: "https://token.sensenova.cn".to_string(),
+            model: "deepseek-v4-flash".to_string(),
+            max_tokens: default_max_tokens(),
+            context_window_tokens: default_context_window_tokens(),
+        }
+    }
+}
+
+fn default_max_tokens() -> u32 {
+    8192
+}
+
+fn default_context_window_tokens() -> u32 {
+    56_000
 }
 
 /// MCP server 列表容器。
@@ -38,12 +82,11 @@ pub struct McpSettings {
     pub servers: Vec<ChatMcpServer>,
 }
 
-/// 单个 MCP server 配置（stdio transport）。
+/// 单个 MCP server 配置（stdio / HTTP-SSE transport）。
 ///
 /// 对照 Kivio `settings.rs::ChatMcpServer`（line 602-623），砍掉了：
-/// - `url` / `headers`（HTTP transport 才用，Phase 3.1 stdio-only）
 /// - `connector_id` / `auth`（OAuth 连接器，Phase 3.1 不做）
-///   保留了 `enabled_tools` 白名单语义（空 = 全启用）。
+/// 保留了 `enabled_tools` 白名单语义（空 = 全启用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ChatMcpServer {
@@ -54,10 +97,11 @@ pub struct ChatMcpServer {
     /// 是否启用。禁用的 server 不进 list_all_tools。
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// 传输方式。Phase 3.1 固定 "stdio"；保留字段防 future。
+    /// 传输方式。"stdio" | "http" | "sse"。
     #[serde(default = "default_stdio")]
     pub transport: String,
     /// stdio 启动命令（如 `npx` / `node` / `python`）。
+    #[serde(default)]
     pub command: String,
     /// 命令参数。
     #[serde(default)]
@@ -68,6 +112,12 @@ pub struct ChatMcpServer {
     /// 子进程工作目录。None = 继承父进程。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// HTTP/SSE transport 的入口 URL（如 `http://localhost:3000/sse`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// HTTP/SSE 请求头（如 `Authorization`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
     /// Tool 白名单（按 MCP tool.name 过滤）。空 = 全启用。
     #[serde(default)]
     pub enabled_tools: Vec<String>,
@@ -84,6 +134,8 @@ impl Default for ChatMcpServer {
             args: Vec::new(),
             env: HashMap::new(),
             cwd: None,
+            url: None,
+            headers: None,
             enabled_tools: Vec::new(),
         }
     }
@@ -255,6 +307,7 @@ mod tests {
             env: HashMap::new(),
             cwd: Some("/tmp".into()),
             enabled_tools: vec!["t1".into()],
+            ..Default::default()
         };
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["id"], "x");
@@ -404,8 +457,11 @@ mod tests {
                     env: HashMap::new(),
                     cwd: None,
                     enabled_tools: Vec::new(),
+                    ..Default::default()
                 }],
             },
+            theme: default_theme(),
+            provider: ProviderConfig::default(),
         };
         let json = serde_json::to_string(&original).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
@@ -432,8 +488,11 @@ mod tests {
                     env: HashMap::new(),
                     cwd: None,
                     enabled_tools: Vec::new(),
+                    ..Default::default()
                 }],
             },
+            theme: default_theme(),
+            provider: ProviderConfig::default(),
         };
 
         std::fs::write(&path, serde_json::to_string_pretty(&original).unwrap())

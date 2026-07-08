@@ -19,17 +19,17 @@ export function ApprovalDialog() {
     if (sending) return;
     setSending(true);
     try {
-      // eslint-disable-next-line no-console
+       
       console.log("[ApprovalDialog] responding:", {
         conversationId: req.conversationId,
         approvalId: req.approvalId,
         allow,
       });
       await approveTool(req.conversationId, req.approvalId, allow);
-      // eslint-disable-next-line no-console
+       
       console.log("[ApprovalDialog] approveTool call succeeded");
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[ApprovalDialog] approveTool failed:", err);
     } finally {
       setSending(false);

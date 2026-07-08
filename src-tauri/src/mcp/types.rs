@@ -267,6 +267,7 @@ mod tests {
             env: std::collections::HashMap::new(),
             cwd: None,
             enabled_tools: Vec::new(),
+            ..Default::default()
         }
     }
 

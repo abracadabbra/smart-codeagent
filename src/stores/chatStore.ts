@@ -77,6 +77,17 @@ interface ChatState {
   previewOpen: boolean;
   togglePreview: () => void;
   setPreviewOpen: (open: boolean) => void;
+
+  // UI: 消息搜索
+  searchOpen: boolean;
+  searchQuery: string;
+  searchResults: number[];
+  searchCurrentIndex: number;
+  toggleSearch: () => void;
+  setSearchOpen: (open: boolean) => void;
+  setSearchQuery: (query: string) => void;
+  nextSearchResult: () => void;
+  prevSearchResult: () => void;
 }
 
 function updateMessageById(
@@ -101,6 +112,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   oldestIndexBySession: {},
 
   previewOpen: true,
+
+  searchOpen: false,
+  searchQuery: "",
+  searchResults: [],
+  searchCurrentIndex: -1,
 
   // ---- Backward-compatible shortcuts ----
 
@@ -512,7 +528,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
       return true;
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[chatStore] loadMessagesPage failed:", err);
       set((s) => ({
         hasMoreBySession: { ...s.hasMoreBySession, [conversationId]: false },
@@ -530,4 +546,89 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setPreviewOpen: (open) => {
     set({ previewOpen: open });
   },
+
+  // UI: 消息搜索
+
+  toggleSearch: () => {
+    set((state) => {
+      const nextOpen = !state.searchOpen;
+      if (!nextOpen) {
+        return {
+          searchOpen: false,
+          searchQuery: "",
+          searchResults: [],
+          searchCurrentIndex: -1,
+        };
+      }
+      const { results } = computeSearchResults(state.messages, state.searchQuery);
+      return {
+        searchOpen: true,
+        searchResults: results,
+        searchCurrentIndex: results.length > 0 ? 0 : -1,
+      };
+    });
+  },
+
+  setSearchOpen: (open) => {
+    set((state) => {
+      if (!open) {
+        return {
+          searchOpen: false,
+          searchQuery: "",
+          searchResults: [],
+          searchCurrentIndex: -1,
+        };
+      }
+      const { results } = computeSearchResults(state.messages, state.searchQuery);
+      return {
+        searchOpen: true,
+        searchResults: results,
+        searchCurrentIndex: results.length > 0 ? 0 : -1,
+      };
+    });
+  },
+
+  setSearchQuery: (query) => {
+    set((state) => {
+      const { results } = computeSearchResults(state.messages, query);
+      const currentIndex = results.length > 0 ? 0 : -1;
+      return {
+        searchQuery: query,
+        searchResults: results,
+        searchCurrentIndex: currentIndex,
+      };
+    });
+  },
+
+  nextSearchResult: () => {
+    set((state) => {
+      if (state.searchResults.length === 0) return {};
+      const nextIndex =
+        state.searchCurrentIndex + 1 >= state.searchResults.length
+          ? 0
+          : state.searchCurrentIndex + 1;
+      return { searchCurrentIndex: nextIndex };
+    });
+  },
+
+  prevSearchResult: () => {
+    set((state) => {
+      if (state.searchResults.length === 0) return {};
+      const prevIndex =
+        state.searchCurrentIndex - 1 < 0
+          ? state.searchResults.length - 1
+          : state.searchCurrentIndex - 1;
+      return { searchCurrentIndex: prevIndex };
+    });
+  },
 }));
+
+function computeSearchResults(messages: Message[], query: string): { results: number[] } {
+  if (!query.trim()) return { results: [] };
+  const lower = query.toLowerCase();
+  const results = messages
+    .map((m, i) => ({ i, match: (m.content ?? "").toLowerCase().includes(lower) }))
+    .filter((x) => x.match)
+    .map((x) => x.i);
+  return { results };
+}

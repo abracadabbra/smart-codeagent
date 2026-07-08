@@ -47,7 +47,7 @@ const codeTheme = {
 
 function InlineCode({ children }: { children?: React.ReactNode }) {
   return (
-    <code className="inline px-1.5 py-0.5 rounded-md bg-ink-800/70 text-[#e6edf3] text-[0.85em] font-mono border border-ink-700/40 align-baseline leading-none">
+    <code className="inline px-1.5 py-0.5 rounded-md bg-ink-800/40 text-ink-200 text-[0.85em] font-mono align-baseline leading-none">
       {children}
     </code>
   );
@@ -68,14 +68,6 @@ function CodeBlock({
   const language = match ? match[1] : "";
   const code = String(children ?? "").replace(/\n$/, "");
 
-  // 短代码块降级为行内样式：LLM 经常把本应行内引用的短标识符用 ``` ``` 围栏包起来，
-  // 如果内容只有一行且较短，按行内 code 渲染，避免破坏段落排版。
-  const isShortBlock =
-    !inline && !code.includes("\n") && code.length > 0 && code.length <= 80 && !className;
-  if (inline || ctx.insideTable || (ctx.insideList && !code.includes("\n")) || isShortBlock) {
-    return <InlineCode>{children}</InlineCode>;
-  }
-
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(code);
@@ -84,8 +76,16 @@ function CodeBlock({
     } catch { /* ignore */ }
   }, [code]);
 
+  // 短代码块降级为行内样式：LLM 经常把本应行内引用的短标识符用 ``` ``` 围栏包起来，
+  // 如果内容只有一行且较短，按行内 code 渲染，避免破坏段落排版。
+  const isShortBlock =
+    !inline && !code.includes("\n") && code.length > 0 && code.length <= 80 && !className;
+  if (inline || ctx.insideTable || (ctx.insideList && !code.includes("\n")) || isShortBlock) {
+    return <InlineCode>{children}</InlineCode>;
+  }
+
   return (
-    <div className="my-3 rounded-lg overflow-hidden border border-ink-800/50 bg-[#161b22]">
+    <div className="my-3 rounded-lg overflow-hidden border border-ink-800/50 bg-ink-900">
       <div className="flex items-center justify-between px-3.5 py-1.5 bg-ink-800/40 border-b border-ink-800/50 select-none">
         <span className="text-[11px] text-ink-400 font-medium tracking-wide">{language || "code"}</span>
         <button
@@ -116,7 +116,7 @@ function CodeBlock({
         language={language || "text"}
         PreTag="div"
         customStyle={{
-          background: "#161b22",
+          background: "transparent",
           padding: "12px 16px",
           margin: 0,
         }}
@@ -154,7 +154,7 @@ export function MarkdownMessage({ content }: MarkdownMessageProps) {
               <p
                 className={[
                   "my-2 first:mt-0 last:mb-0",
-                  looksLikeCode ? "whitespace-pre-wrap font-mono text-[13px] bg-ink-900/30 border border-ink-800/30 rounded-lg p-3" : "",
+                  looksLikeCode ? "whitespace-pre-wrap font-mono text-[13px] bg-ink-900/30 rounded-lg p-3" : "",
                 ].join(" ")}
               >
                 {children}

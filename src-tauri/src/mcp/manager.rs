@@ -1,10 +1,10 @@
 //! 多 MCP server 协调器。
 //!
-//! 持有所有 enabled server 的 `StdioMcpClient`，并发拉取工具列表，路由 tool call。
+//! 持有所有 enabled server 的 `McpClient`（stdio 或 HTTP/SSE），并发拉取工具列表，路由 tool call。
 //! 状态事件经 `CachingSink` 双写：更新内部状态缓存 + 转发到前端（TauriEventSink）。
 //!
 //! 参照 Kivio `mcp/manager.rs` + `mcp/registry.rs::list_enabled_tool_defs`，砍掉：
-//! - HTTP transport / OAuth（Phase 3.1 不做）
+//! - OAuth（Phase 3.1 不做）
 //! - idle reaper（Phase 3.1 不做，退出钩子兜底）
 //! - 配置指纹热重建（Phase 3.3 实现热重载：reconnect_all + Settings 重新加载）
 
@@ -20,12 +20,63 @@ use tokio::sync::Mutex;
 use crate::settings::{ChatMcpServer, Settings};
 
 use super::client::{McpEventSink, StdioMcpClient};
+use super::http_client::HttpMcpClient;
 use super::types::{McpServerState, McpServerStatePayload, McpTool, McpToolCallResult};
 use super::types::tool_definition_from_mcp;
 use crate::agent::tools::ChatToolDefinition;
 
 /// 默认 tool 超时（30s）。生产路径可由调用方覆盖。
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+
+/// 统一 MCP client 抽象：stdio 子进程 或 HTTP/SSE 远程 server。
+///
+/// 两种 transport 对外提供相同的 `list_tools` / `call_tool` / `disconnect` 接口，
+/// 使 `McpManager` 无需关心底层传输细节。
+pub enum McpClient {
+    Stdio(StdioMcpClient),
+    Http(HttpMcpClient),
+}
+
+impl McpClient {
+    pub fn new(server: ChatMcpServer, sink: Arc<dyn McpEventSink>, timeout_ms: u64) -> Self {
+        match server.transport.as_str() {
+            "http" | "sse" => Self::Http(HttpMcpClient::new(server, sink, timeout_ms)),
+            _ => Self::Stdio(StdioMcpClient::new(server, sink, timeout_ms)),
+        }
+    }
+
+    pub async fn list_tools(&self) -> Result<Vec<McpTool>, String> {
+        match self {
+            Self::Stdio(c) => c.list_tools().await,
+            Self::Http(c) => c.list_tools().await,
+        }
+    }
+
+    pub async fn call_tool(
+        &self,
+        name: &str,
+        arguments: Value,
+    ) -> Result<McpToolCallResult, String> {
+        match self {
+            Self::Stdio(c) => c.call_tool(name, arguments).await,
+            Self::Http(c) => c.call_tool(name, arguments).await,
+        }
+    }
+
+    pub async fn disconnect(&self) {
+        match self {
+            Self::Stdio(c) => c.disconnect().await,
+            Self::Http(c) => c.disconnect().await,
+        }
+    }
+
+    pub fn server(&self) -> &ChatMcpServer {
+        match self {
+            Self::Stdio(c) => c.server(),
+            Self::Http(c) => c.server(),
+        }
+    }
+}
 
 /// 生产用 sink：通过 `AppHandle.emit("mcp-server-state", payload)` 推前端。
 pub struct TauriEventSink {
@@ -86,12 +137,12 @@ impl McpEventSink for CachingSink {
 /// 多 MCP server 协调器。
 pub struct McpManager {
     /// `server_id -> client`，懒初始化：首次 `list_all_tools` 时才创建 client。
-    clients: Arc<Mutex<HashMap<String, Arc<StdioMcpClient>>>>,
+    clients: Arc<Mutex<HashMap<String, Arc<McpClient>>>>,
     /// 状态缓存：由 `CachingSink` 在 emit 时同步更新。
     states: Arc<StdMutex<HashMap<String, McpServerState>>>,
-    /// 包装了 `CachingSink` 的 sink，传给每个 `StdioMcpClient`。
+    /// 包装了 `CachingSink` 的 sink，传给每个 `McpClient`。
     sink: Arc<dyn McpEventSink>,
-    /// 传给 `StdioMcpClient::new` 的超时。
+    /// 传给 `McpClient::new` 的超时。
     timeout_ms: u64,
 }
 
@@ -118,12 +169,12 @@ impl McpManager {
 
     /// 获取或创建 server 对应的 client（懒初始化）。
     /// 已存在的 client 直接 clone Arc 返回，保证同一 server_id 复用同一 client。
-    async fn get_or_init_client(&self, server: &ChatMcpServer) -> Arc<StdioMcpClient> {
+    async fn get_or_init_client(&self, server: &ChatMcpServer) -> Arc<McpClient> {
         let mut clients = self.clients.lock().await;
         clients
             .entry(server.id.clone())
             .or_insert_with(|| {
-                Arc::new(StdioMcpClient::new(
+                Arc::new(McpClient::new(
                     server.clone(),
                     self.sink.clone(),
                     self.timeout_ms,
@@ -155,7 +206,7 @@ impl McpManager {
         // 先顺序初始化所有 client 并注册到池。
         // `get_or_init_client` 锁持有极短（仅 HashMap entry + clone Arc），顺序调用无性能问题。
         // 这样保证后续 `call_tool` 能按 server_id 找到同一 client，复用持久会话。
-        let clients: Vec<(ChatMcpServer, Arc<StdioMcpClient>)> = Vec::with_capacity(enabled.len());
+        let clients: Vec<(ChatMcpServer, Arc<McpClient>)> = Vec::with_capacity(enabled.len());
         let mut clients = clients;
         for server in enabled {
             let client = self.get_or_init_client(&server).await;
@@ -210,10 +261,10 @@ impl McpManager {
         client.call_tool(tool_name, arguments).await
     }
 
-    /// 排干所有 client：每个 `StdioMcpClient::disconnect` 触发 Drop → kill 子进程。
+    /// 排干所有 client：stdio 子进程会触发 Drop → kill 子进程。
     /// 退出钩子用。
     pub async fn disconnect_all(&self) {
-        let drained: Vec<(String, Arc<StdioMcpClient>)> = {
+        let drained: Vec<(String, Arc<McpClient>)> = {
             let mut clients = self.clients.lock().await;
             clients.drain().collect()
         };
@@ -254,7 +305,7 @@ impl McpManager {
     /// 测试单个 server 是否能正常连接（不注册到池，测试完毕立即断开）。
     /// 用于前端"测试连接"按钮。
     pub async fn test_connection(&self, server: &ChatMcpServer) -> Result<(), String> {
-        let client = StdioMcpClient::new(server.clone(), self.sink.clone(), self.timeout_ms);
+        let client = McpClient::new(server.clone(), self.sink.clone(), self.timeout_ms);
         client.list_tools().await?;
         client.disconnect().await;
         Ok(())
@@ -335,14 +386,17 @@ while True:
             env: HashMap::new(),
             cwd: None,
             enabled_tools: Vec::new(),
+            ..Default::default()
         };
         (server, script)
     }
 
-    /// 测试辅助：直接构造 `Settings`（`Settings` 仅含 `mcp` 字段）。
+    /// 测试辅助：直接构造 `Settings`。
     fn settings_with(servers: Vec<ChatMcpServer>) -> Settings {
         Settings {
             mcp: crate::settings::McpSettings { servers },
+            theme: crate::settings::default_theme(),
+            provider: crate::settings::ProviderConfig::default(),
         }
     }
 
@@ -384,6 +438,7 @@ while True:
             env: HashMap::new(),
             cwd: None,
             enabled_tools: Vec::new(),
+            ..Default::default()
         };
         let settings = settings_with(vec![good, bad]);
         let manager = McpManager::new_with_sink(Arc::new(()), 5_000);
@@ -419,6 +474,7 @@ while True:
             env: HashMap::new(),
             cwd: None,
             enabled_tools: vec!["keep".to_string()],
+            ..Default::default()
         };
         let settings = settings_with(vec![server]);
         let manager = McpManager::new_with_sink(Arc::new(()), 5_000);

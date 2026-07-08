@@ -13,6 +13,9 @@
 use std::sync::Arc;
 
 use crate::agent::host::AgentHost;
+use crate::agent::recovery::{
+    error_message_for_user, RetryPolicy, TrimAndRetryContext, retry_with_backoff_hooked,
+};
 use crate::agent::tools::{ToolCallRecord, ToolCallStatus, ToolContext, ToolRegistry};
 use crate::agent::types::{AgentRunConfig, AgentRunResult, RoundResponse, ToolUseBlock};
 use crate::agent::{AgentState, Message, OpenAiFunction, OpenAiToolCall};
@@ -20,7 +23,7 @@ use crate::config::AnthropicConfig;
 use crate::ipc::events::{emit_error, emit_status, emit_stream_done};
 use crate::mcp::McpManager;
 use crate::providers::anthropic::AnthropicClient;
-use crate::providers::{MessagesRequest, Provider, StreamChunk};
+use crate::providers::{MessagesRequest, Provider, StreamChunk, TokenStream};
 use crate::session::store::SessionStore;
 use crate::session::types::ChatMessage;
 use crate::settings::Settings;
@@ -175,10 +178,10 @@ pub async fn run_agent_loop(
     emit_status(app.as_ref(), &conv_id, AgentState::Prepare);
 
     // 2. 构造 provider + tool registry
-    let anthropic_cfg = match AnthropicConfig::from_env() {
+    let anthropic_cfg = match AnthropicConfig::from_provider(&settings.provider) {
         Ok(cfg) => cfg,
         Err(e) => {
-            let msg = format!("配置错误: {e}. 请在设置中配置 LLM_API_KEY 或在 .env 文件中设置.");
+            let msg = format!("配置错误: {e}. 请在设置面板中配置 LLM Provider（API Key / Base URL / Model）。");
             emit_error(app.as_ref(), &conv_id, &assistant_id, &msg);
             app_state.set_session_state(&conv_id, AgentState::Idle);
             emit_status(app.as_ref(), &conv_id, AgentState::Idle);
@@ -217,25 +220,21 @@ pub async fn run_agent_loop(
         }
 
         let snapshot = session.to_llm_messages();
-        info!(
-            "round {round} start: requesting LLM (history len={})",
-            snapshot.len()
-        );
-
-        let req = MessagesRequest {
-            model: config.model.clone(),
-            max_tokens: config.max_tokens,
-            messages: snapshot,
-            system: Some(config.system_prompt.clone()),
-            stream: true,
-            tools: tool_defs.clone(),
-        };
-
-        let stream_result = provider.stream_chat(req).await;
-        let mut stream = match stream_result {
+        let mut stream = match request_stream_with_recovery(
+            &provider,
+            &config,
+            &snapshot,
+            &tool_defs,
+            &app,
+            app_state,
+            &conv_id,
+            generation,
+            round,
+        )
+        .await
+        {
             Ok(s) => s,
-            Err(e) => {
-                let msg = format!("request failed: {e}");
+            Err(msg) => {
                 emit_error(app.as_ref(), &conv_id, &assistant_id, &msg);
                 app_state.set_session_state(&conv_id, AgentState::Stop);
                 emit_status(app.as_ref(), &conv_id, AgentState::Stop);
@@ -400,6 +399,100 @@ pub async fn run_agent_loop(
     app_state.set_session_state(&conv_id, AgentState::Idle);
     emit_status(app.as_ref(), &conv_id, AgentState::Idle);
     Ok(result)
+}
+
+/// 带错误恢复的 LLM stream 请求。
+///
+/// 组合 RetryBackoff（指数退避）与 TrimAndRetry（上下文裁剪）：
+/// - RateLimited / NetworkError → 指数退避重试，最多 5 次
+/// - ContextOverflow / ParseError → 逐步丢弃最旧 1/3 历史后重试，最多 3 次
+/// - AuthFailed / Fatal → 立即失败，返回用户友好的中文提示
+///
+/// 恢复过程中会向前端 emit `RetryBackoff` / `TrimContext` 状态，
+/// 成功或最终失败前恢复为 `ToolLoop`。
+#[allow(clippy::too_many_arguments)]
+async fn request_stream_with_recovery(
+    provider: &dyn Provider,
+    config: &AgentRunConfig,
+    snapshot: &[Message],
+    tool_defs: &[crate::agent::tools::ChatToolDefinition],
+    app: &Option<AppHandle>,
+    app_state: &AppState,
+    conv_id: &str,
+    generation: u64,
+    round: u32,
+) -> Result<TokenStream, String> {
+    use crate::agent::recovery::RecoverableError;
+    use std::time::Duration;
+
+    let mut trim_ctx = TrimAndRetryContext::new(config.context_window_tokens);
+
+    loop {
+        let current_trimmed = trim_ctx.trim_messages(snapshot);
+        let trimmed_tokens: usize = current_trimmed
+            .iter()
+            .map(crate::agent::context::estimate_tokens)
+            .sum();
+        info!(
+            "round {round} start: requesting LLM (history len={}, trimmed len={}, estimated tokens={}, trim_count={})",
+            snapshot.len(),
+            current_trimmed.len(),
+            trimmed_tokens,
+            trim_ctx.trim_count
+        );
+
+        let req = MessagesRequest {
+            model: config.model.clone(),
+            max_tokens: config.max_tokens,
+            messages: current_trimmed,
+            system: Some(config.system_prompt.clone()),
+            stream: true,
+            tools: tool_defs.to_vec(),
+        };
+
+        let policy = RetryPolicy::default();
+        let max_retries = policy.max_retries;
+        let stream_result = retry_with_backoff_hooked(
+            &policy,
+            || {
+                let req = req.clone();
+                provider.stream_chat(req)
+            },
+            || !app_state.is_generation_active(conv_id, generation),
+            move |_recoverable, attempt, delay: Duration| {
+                app_state.set_session_state(conv_id, AgentState::RetryBackoff);
+                emit_status(app.as_ref(), conv_id, AgentState::RetryBackoff);
+                info!(
+                    "round {round}: LLM request retry {}/{} with backoff {:?}",
+                    attempt, max_retries, delay
+                );
+            },
+        )
+        .await;
+
+        match stream_result {
+            Ok(s) => {
+                app_state.set_session_state(conv_id, AgentState::ToolLoop);
+                emit_status(app.as_ref(), conv_id, AgentState::ToolLoop);
+                return Ok(s);
+            }
+            Err(e) => {
+                let recoverable = RecoverableError::from_provider_error(&e);
+                if recoverable.should_trim() && trim_ctx.trim() {
+                    app_state.set_session_state(conv_id, AgentState::TrimContext);
+                    emit_status(app.as_ref(), conv_id, AgentState::TrimContext);
+                    warn!(
+                        "round {round}: trimming context and retrying after error: {e}"
+                    );
+                    continue;
+                }
+
+                app_state.set_session_state(conv_id, AgentState::ToolLoop);
+                emit_status(app.as_ref(), conv_id, AgentState::ToolLoop);
+                return Err(error_message_for_user(&e));
+            }
+        }
+    }
 }
 
 /// 消费单个 stream，累积 text + tool_use。

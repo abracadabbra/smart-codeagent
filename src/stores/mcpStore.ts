@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { ChatMcpServer, McpServerState } from "@/types/mcp";
+import type { AppSettings, ProviderConfig } from "@/types/settings";
+import { defaultProviderConfig } from "@/types/settings";
 
 interface McpStoreState {
   servers: ChatMcpServer[];
@@ -9,6 +11,7 @@ interface McpStoreState {
   saving: boolean;
   showSettings: boolean;
   theme: "dark" | "light";
+  provider: ProviderConfig;
 
   setServers: (servers: ChatMcpServer[]) => void;
   setState: (serverId: string, state: McpServerState) => void;
@@ -18,6 +21,8 @@ interface McpStoreState {
   setSaving: (saving: boolean) => void;
   setShowSettings: (show: boolean) => void;
   setTheme: (theme: "dark" | "light") => Promise<void>;
+  setProvider: (provider: ProviderConfig) => Promise<void>;
+  updateProvider: (updates: Partial<ProviderConfig>) => Promise<void>;
 
   addServer: (server: ChatMcpServer) => Promise<void>;
   updateServer: (id: string, updates: Partial<ChatMcpServer>) => Promise<void>;
@@ -35,6 +40,7 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
   saving: false,
   showSettings: false,
   theme: "dark",
+  provider: defaultProviderConfig(),
 
   setServers: (servers) => set({ servers }),
   setState: (serverId, state) =>
@@ -48,13 +54,27 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
   setTheme: async (theme) => {
     set({ theme });
     document.body.className = theme === "light" ? "light" : "";
-    await saveSettingsToBackend(get().servers, theme);
+    await saveSettingsToBackend(get());
+    await get().reloadSettings();
+  },
+
+  setProvider: async (provider) => {
+    set({ provider });
+    await saveSettingsToBackend(get());
+    await get().reloadSettings();
+  },
+
+  updateProvider: async (updates) => {
+    const provider = { ...get().provider, ...updates };
+    set({ provider });
+    await saveSettingsToBackend(get());
     await get().reloadSettings();
   },
 
   addServer: async (server) => {
     const servers = [...get().servers, server];
-    await saveSettingsToBackend(servers, get().theme);
+    set({ servers });
+    await saveSettingsToBackend(get());
     await get().reloadSettings();
   },
 
@@ -62,13 +82,15 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
     const servers = get().servers.map((s) =>
       s.id === id ? { ...s, ...updates } : s,
     );
-    await saveSettingsToBackend(servers, get().theme);
+    set({ servers });
+    await saveSettingsToBackend(get());
     await get().reloadSettings();
   },
 
   deleteServer: async (id) => {
     const servers = get().servers.filter((s) => s.id !== id);
-    await saveSettingsToBackend(servers, get().theme);
+    set({ servers });
+    await saveSettingsToBackend(get());
     await get().reloadSettings();
   },
 
@@ -76,14 +98,15 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
     const servers = get().servers.map((s) =>
       s.id === id ? { ...s, enabled: !s.enabled } : s,
     );
-    await saveSettingsToBackend(servers, get().theme);
+    set({ servers });
+    await saveSettingsToBackend(get());
     await get().reloadSettings();
   },
 
   saveSettings: async () => {
     set({ saving: true });
     try {
-      await saveSettingsToBackend(get().servers, get().theme);
+      await saveSettingsToBackend(get());
     } finally {
       set({ saving: false });
     }
@@ -92,14 +115,16 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
   reloadSettings: async () => {
     set({ loading: true });
     try {
-      const [servers, states, theme] = await Promise.all([
+      const [servers, states, settingsJson] = await Promise.all([
         invoke<ChatMcpServer[]>("list_mcp_servers"),
         invoke<Record<string, McpServerState>>("list_mcp_server_states"),
         invoke<string>("get_settings"),
       ]);
       set({ servers, states });
-      const parsedTheme = (JSON.parse(theme) as { theme: string }).theme || "dark";
+      const settings = JSON.parse(settingsJson) as AppSettings;
+      const parsedTheme = settings.theme || "dark";
       set({ theme: parsedTheme as "dark" | "light" });
+      set({ provider: settings.provider || defaultProviderConfig() });
       document.body.className = parsedTheme === "light" ? "light" : "";
     } finally {
       set({ loading: false });
@@ -111,13 +136,16 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
   },
 }));
 
-async function saveSettingsToBackend(servers: ChatMcpServer[], theme: string = "dark") {
+async function saveSettingsToBackend(
+  state: Pick<McpStoreState, "servers" | "theme" | "provider">,
+) {
   await invoke("save_settings", {
     settings: {
       mcp: {
-        servers,
+        servers: state.servers,
       },
-      theme,
+      theme: state.theme,
+      provider: state.provider,
     },
   });
 }
@@ -130,12 +158,15 @@ export async function initMcpStore() {
       invoke<string>("get_settings"),
     ]);
     useMcpStore.setState({ servers, states });
-    const parsed = JSON.parse(settingsJson) as { theme: string };
-    const theme = (parsed.theme || "dark") as "dark" | "light";
-    useMcpStore.setState({ theme });
+    const settings = JSON.parse(settingsJson) as AppSettings;
+    const theme = (settings.theme || "dark") as "dark" | "light";
+    useMcpStore.setState({
+      theme,
+      provider: settings.provider || defaultProviderConfig(),
+    });
     document.body.className = theme === "light" ? "light" : "";
   } catch (err) {
-    // eslint-disable-next-line no-console
+     
     console.warn("[mcpStore] init failed (non-Tauri env?):", err);
   }
 }

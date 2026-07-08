@@ -5,7 +5,9 @@ export type AgentState =
   | "Stop"
   | "ToolLoop"
   | "Synthesis"
-  | "Plain";
+  | "Plain"
+  | "RetryBackoff"
+  | "TrimContext";
 
 // Kept in sync with src-tauri/src/agent/mod.rs AgentState enum
 export const AGENT_STATES: AgentState[] = [
@@ -16,4 +18,6 @@ export const AGENT_STATES: AgentState[] = [
   "ToolLoop",
   "Synthesis",
   "Plain",
+  "RetryBackoff",
+  "TrimContext",
 ];

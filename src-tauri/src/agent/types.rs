@@ -17,13 +17,23 @@ pub struct AgentRunConfig {
     pub system_prompt: String,
     /// 每个 round 内允许的并行 tool 上限（Kivio 是 12，Phase 2 调到 8）
     pub max_parallel_tool_calls_per_round: usize,
+    /// 上下文窗口 token 上限（输入消息 + system prompt）。
+    /// 超出时从最旧非 system 消息开始丢弃。
+    pub context_window_tokens: u32,
 }
 
 impl Default for AgentRunConfig {
     fn default() -> Self {
+        Self::from_settings(&crate::settings::ProviderConfig::default())
+    }
+}
+
+impl AgentRunConfig {
+    /// 从 settings.json 中的 ProviderConfig 构造运行配置。
+    pub fn from_settings(provider: &crate::settings::ProviderConfig) -> Self {
         Self {
-            model: std::env::var("LLM_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".into()),
-            max_tokens: 8192,
+            model: provider.model.clone(),
+            max_tokens: provider.max_tokens,
             max_tool_rounds: 8,
             system_prompt: "You are Smart CodeAgent, an AI coding assistant. \
                 Be concise and helpful. \
@@ -37,6 +47,7 @@ impl Default for AgentRunConfig {
                 and shell commands (e.g. use 'rm -rf ./test' not 'rm -rf /Users/.../test')."
                 .into(),
             max_parallel_tool_calls_per_round: 8,
+            context_window_tokens: provider.context_window_tokens,
         }
     }
 }

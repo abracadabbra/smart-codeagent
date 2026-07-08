@@ -128,7 +128,6 @@ pub async fn send_message(
             return Err("TauriHost not managed".into());
         }
     };
-    let config = AgentRunConfig::default();
     let settings = match app.try_state::<Arc<Mutex<Settings>>>() {
         Some(s) => s.lock().await.clone(),
         None => {
@@ -148,6 +147,7 @@ pub async fn send_message(
     tokio::spawn(async move {
         // reservation 持有到 run 结束（drop 时释放 busy 槽位）
         let _reservation = reservation;
+        let config = AgentRunConfig::from_settings(&settings.provider);
         let result = run_agent_loop(
             config,
             host,

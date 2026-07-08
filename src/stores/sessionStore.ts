@@ -65,7 +65,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[sessionStore] list_sessions failed:", err);
     }
   },
@@ -122,7 +122,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       useAgentStore.getState().setActiveConversation(conv.id);
       return conv.id;
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[sessionStore] create_session failed:", err);
       throw err;
     }
@@ -140,7 +140,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[sessionStore] update_session failed:", err);
     }
   },
@@ -163,7 +163,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return { sessions: next, activeSessionId: nextActive };
       });
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[sessionStore] delete_session failed:", err);
     }
   },
@@ -191,7 +191,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return { sessions: next };
       });
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[sessionStore] update_session (pin) failed:", err);
     }
   },
@@ -229,7 +229,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       useAgentStore.getState().setStateFor(id, "Idle");
       get().markGenerating(id, false);
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[sessionStore] force_reset_session failed:", err);
     }
   },

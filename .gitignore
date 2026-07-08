@@ -37,17 +37,28 @@ yarn-error.log*
 # Tauri build output
 src-tauri/target/
 
+# Tauri signing keys / dev artifacts
+.tauri/
+
+# Temporary dev scratch files
+src-tauri/quicksort.rs
+
 # Tauri dev sessions dir (绕过 ~/Library/Application Support 沙箱限制)
 .tauri-sessions/
 
 # Trellis internal state
 .trellis/.runtime/
 .trellis/.developer
+.trellis/tasks/
 
 # OMC runtime (per-session state, scan timestamps, hot-paths cache)
 .omc/state/
 .omc/project-memory.json
 .omc/notepad.md
+
+# Package manager lock files (use npm only)
+pnpm-lock.yaml
+yarn.lock
 
 # OS
 Thumbs.db

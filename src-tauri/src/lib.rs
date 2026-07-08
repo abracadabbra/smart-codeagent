@@ -8,7 +8,6 @@ pub mod providers;
 pub mod session;
 pub mod settings;
 pub mod state;
-
 use std::sync::Arc;
 
 use tauri::Manager;
@@ -17,10 +16,9 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::agent::host_impl::TauriHost;
 use crate::ipc::commands::{
-    answer_ask_user, approve_tool, cancel_run, get_session_state, list_active_sessions,
-    force_reset_session, list_mcp_server_states,
-    list_mcp_servers, save_settings, reload_settings, test_mcp_server, send_message,
-    get_settings,
+    answer_ask_user, approve_tool, cancel_run, force_reset_session, get_session_state,
+    get_settings, list_active_sessions, list_mcp_server_states, list_mcp_servers,
+    reload_settings, save_settings, send_message, test_mcp_server,
 };
 use crate::mcp::McpManager;
 use crate::session::commands::{
@@ -44,7 +42,12 @@ pub fn init_tracing() {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())
+                .expect("初始化 updater 插件失败");
             let handle = app.handle();
 
             // Phase 3.2: AppState（多 session 并行核心）—— 全局单例
@@ -80,6 +83,7 @@ pub fn run() {
 
             let mcp_manager = Arc::new(McpManager::new(handle.clone()));
             app.manage(mcp_manager);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -105,7 +109,7 @@ pub fn run() {
             get_session_messages,
             update_session,
             delete_session,
-            search_sessions
+            search_sessions,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

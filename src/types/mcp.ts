@@ -31,6 +31,8 @@ export interface ChatMcpServer {
   args: string[];
   env: Record<string, string>;
   cwd?: string | null;
+  url?: string | null;
+  headers?: Record<string, string> | null;
   enabledTools: string[];
 }
 

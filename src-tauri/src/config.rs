@@ -14,6 +14,9 @@ pub enum ConfigError {
 
     #[error("env var `{0}` is malformed: {1}")]
     MalformedEnv(&'static str, String),
+
+    #[error("provider config missing api key")]
+    MissingApiKey,
 }
 
 #[derive(Debug, Clone)]
@@ -34,5 +37,18 @@ impl AnthropicConfig {
             .unwrap_or_else(|_| "deepseek-v4-flash".to_string());
 
         Ok(Self { api_key, base_url, model })
+    }
+
+    /// 从 settings.json 中的 ProviderConfig 构造。
+    /// API Key 为空时返回 Err，提示用户前往设置面板配置。
+    pub fn from_provider(provider: &crate::settings::ProviderConfig) -> Result<Self, ConfigError> {
+        if provider.api_key.trim().is_empty() {
+            return Err(ConfigError::MissingApiKey);
+        }
+        Ok(Self {
+            api_key: provider.api_key.clone(),
+            base_url: provider.base_url.clone(),
+            model: provider.model.clone(),
+        })
     }
 }

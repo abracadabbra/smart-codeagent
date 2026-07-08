@@ -69,7 +69,7 @@ export function AskUserPromptCard() {
     try {
       await answerAskUser(req.conversationId, req.askUserId, "answered", payload);
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("answerAskUser failed:", err);
     } finally {
       setSending(false);

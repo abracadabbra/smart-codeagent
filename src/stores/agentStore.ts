@@ -166,7 +166,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     try {
       await invoke("cancel_run", { conversationId } as Record<string, unknown>);
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[agentStore] cancel_run failed:", err);
     }
   },
@@ -184,7 +184,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
         },
       } as Record<string, unknown>);
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[agentStore] approve_tool failed:", err);
     }
   },
@@ -202,7 +202,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
         },
       } as Record<string, unknown>);
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.error("[agentStore] answer_ask_user failed:", err);
     }
   },

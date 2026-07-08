@@ -1,7 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMcpStore } from "@/stores/mcpStore";
 import { McpServerForm } from "./McpServerForm";
 import type { ChatMcpServer, McpServerState } from "@/types/mcp";
+import type { ProviderConfig } from "@/types/settings";
+import { defaultProviderConfig } from "@/types/settings";
+import { checkUpdate, downloadAndInstall } from "@/lib/updater";
+import type { UpdateInfo } from "@/lib/updater";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -26,16 +30,32 @@ function getStatusIcon(state: McpServerState | undefined) {
 }
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("mcp");
-  const [editingServer, setEditingServer] = useState<ChatMcpServer | null>(null);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [testResult, setTestResult] = useState<Record<string, "success" | "error" | null>>({});
-
   const servers = useMcpStore((s) => s.servers);
   const states = useMcpStore((s) => s.states);
   const loading = useMcpStore((s) => s.loading);
   const saving = useMcpStore((s) => s.saving);
   const theme = useMcpStore((s) => s.theme);
+  const provider = useMcpStore((s) => s.provider);
+
+  const [activeTab, setActiveTab] = useState<Tab>("mcp");
+  const [editingServer, setEditingServer] = useState<ChatMcpServer | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [testResult, setTestResult] = useState<Record<string, "success" | "error" | null>>({});
+  const [providerDraft, setProviderDraft] = useState<ProviderConfig>(provider);
+  const [providerSaved, setProviderSaved] = useState(false);
+
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [downloadingUpdate, setDownloadingUpdate] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<{
+    downloaded: number;
+    total: number | null;
+  } | null>(null);
+
+  useEffect(() => {
+    setProviderDraft(provider);
+  }, [provider]);
 
   const addServer = useMcpStore((s) => s.addServer);
   const updateServer = useMcpStore((s) => s.updateServer);
@@ -43,6 +63,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const toggleServerEnabled = useMcpStore((s) => s.toggleServerEnabled);
   const testServer = useMcpStore((s) => s.testServer);
   const setTheme = useMcpStore((s) => s.setTheme);
+  const updateProvider = useMcpStore((s) => s.updateProvider);
 
   const handleAdd = (server: ChatMcpServer) => {
     addServer(server);
@@ -57,6 +78,46 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const handleDelete = (id: string) => {
     if (confirm("确定要删除这个 MCP Server 吗？")) {
       deleteServer(id);
+    }
+  };
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    setUpdateError(null);
+    try {
+      const info = await checkUpdate();
+      if (info) {
+        setUpdateInfo(info);
+      } else {
+        setUpdateError("当前已是最新版本");
+      }
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : "检查更新失败");
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const handleDownloadUpdate = async () => {
+    if (!updateInfo) return;
+    setDownloadingUpdate(true);
+    setUpdateError(null);
+    setDownloadProgress(null);
+    try {
+      await downloadAndInstall((event) => {
+        if (event.kind === "progress") {
+          setDownloadProgress({
+            downloaded: event.downloaded,
+            total: event.contentLength,
+          });
+        } else if (event.kind === "finished") {
+          setDownloadProgress(null);
+        }
+      });
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : "下载更新失败");
+    } finally {
+      setDownloadingUpdate(false);
     }
   };
 
@@ -268,10 +329,127 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   );
 
   const renderLlmTab = () => (
-    <div className="flex-1 flex items-center justify-center">
-      <div className="text-center">
-        <div className="text-ink-500 text-sm mb-2">LLM Provider 配置</div>
-        <div className="text-ink-600 text-xs">目前通过 .env 文件配置，后续将支持 UI 配置</div>
+    <div className="flex-1 overflow-y-auto">
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium text-ink-200">LLM Provider</h2>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setProviderDraft(defaultProviderConfig())}
+              disabled={saving}
+              className="px-2.5 py-1.5 text-xs text-ink-400 hover:text-ink-200 bg-ink-800 hover:bg-ink-700 rounded-md transition-colors disabled:opacity-50"
+            >
+              重置默认
+            </button>
+            <button
+              onClick={async () => {
+                await updateProvider(providerDraft);
+                setProviderSaved(true);
+                setTimeout(() => setProviderSaved(false), 2000);
+              }}
+              disabled={saving}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-brand-600 hover:bg-brand-500 rounded-md transition-colors disabled:opacity-50"
+            >
+              {saving ? (
+                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="12" y1="2" x2="12" y2="6" />
+                  <line x1="12" y1="18" x2="12" y2="22" />
+                  <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" />
+                  <line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
+                  <line x1="2" y1="12" x2="6" y2="12" />
+                  <line x1="18" y1="12" x2="22" y2="12" />
+                  <line x1="6.24" y1="16.24" x2="4.93" y2="19.07" />
+                  <line x1="19.07" y1="4.93" x2="16.24" y2="7.76" />
+                </svg>
+              ) : providerSaved ? (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" />
+                  <polyline points="17 21 17 13 7 13 7 21" />
+                  <polyline points="7 3 7 8 15 8" />
+                </svg>
+              )}
+              {providerSaved ? "已保存" : "保存"}
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-ink-400 mb-1.5">Provider</label>
+            <select
+              value={providerDraft.provider}
+              onChange={(e) => setProviderDraft((p) => ({ ...p, provider: e.target.value }))}
+              className="w-full px-3 py-2 text-sm bg-ink-950 border border-ink-700 rounded-lg text-ink-200 outline-none focus:border-brand-500"
+            >
+              <option value="openai-compatible">OpenAI 兼容</option>
+            </select>
+            <p className="mt-1 text-[11px] text-ink-500">当前仅支持 OpenAI Chat Completions 兼容协议。</p>
+          </div>
+
+          <div>
+            <label className="block text-xs text-ink-400 mb-1.5">API Key</label>
+            <input
+              type="password"
+              value={providerDraft.apiKey}
+              onChange={(e) => setProviderDraft((p) => ({ ...p, apiKey: e.target.value }))}
+              placeholder="sk-..."
+              className="w-full px-3 py-2 text-sm bg-ink-950 border border-ink-700 rounded-lg text-ink-200 placeholder:text-ink-600 outline-none focus:border-brand-500"
+            />
+            <p className="mt-1 text-[11px] text-ink-500">仅保存在本地 settings.json，不会上传到服务端。</p>
+          </div>
+
+          <div>
+            <label className="block text-xs text-ink-400 mb-1.5">Base URL</label>
+            <input
+              type="text"
+              value={providerDraft.baseUrl}
+              onChange={(e) => setProviderDraft((p) => ({ ...p, baseUrl: e.target.value }))}
+              placeholder="https://api.openai.com/v1"
+              className="w-full px-3 py-2 text-sm bg-ink-950 border border-ink-700 rounded-lg text-ink-200 placeholder:text-ink-600 outline-none focus:border-brand-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-ink-400 mb-1.5">Model</label>
+            <input
+              type="text"
+              value={providerDraft.model}
+              onChange={(e) => setProviderDraft((p) => ({ ...p, model: e.target.value }))}
+              placeholder="deepseek-v4-flash"
+              className="w-full px-3 py-2 text-sm bg-ink-950 border border-ink-700 rounded-lg text-ink-200 placeholder:text-ink-600 outline-none focus:border-brand-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-ink-400 mb-1.5">Max Tokens</label>
+              <input
+                type="number"
+                min={1}
+                max={32768}
+                value={providerDraft.maxTokens}
+                onChange={(e) => setProviderDraft((p) => ({ ...p, maxTokens: Number(e.target.value) || 0 }))}
+                className="w-full px-3 py-2 text-sm bg-ink-950 border border-ink-700 rounded-lg text-ink-200 outline-none focus:border-brand-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-ink-400 mb-1.5">Context Window Tokens</label>
+              <input
+                type="number"
+                min={1}
+                max={200000}
+                step={1000}
+                value={providerDraft.contextWindowTokens}
+                onChange={(e) => setProviderDraft((p) => ({ ...p, contextWindowTokens: Number(e.target.value) || 0 }))}
+                className="w-full px-3 py-2 text-sm bg-ink-950 border border-ink-700 rounded-lg text-ink-200 outline-none focus:border-brand-500"
+              />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -317,6 +495,98 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               <span className="text-xs">亮色</span>
             </button>
           </div>
+        </div>
+
+        <div className="pt-4 border-t border-ink-800">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-ink-200">自动更新</h2>
+            <button
+              onClick={handleCheckUpdate}
+              disabled={checkingUpdate}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-ink-300 hover:text-ink-100 bg-ink-800 hover:bg-ink-700 rounded-md transition-colors disabled:opacity-50"
+            >
+              {checkingUpdate ? (
+                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="12" y1="2" x2="12" y2="6" />
+                  <line x1="12" y1="18" x2="12" y2="22" />
+                  <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" />
+                  <line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
+                  <line x1="2" y1="12" x2="6" y2="12" />
+                  <line x1="18" y1="12" x2="22" y2="12" />
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                  <path d="M16 21h5v-5" />
+                </svg>
+              )}
+              {checkingUpdate ? "检查中..." : "检查更新"}
+            </button>
+          </div>
+
+          {updateError && (
+            <div className="mb-3 text-xs text-ink-500">{updateError}</div>
+          )}
+
+          {updateInfo ? (
+            <div className="bg-ink-800/50 border border-ink-700 rounded-lg p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm text-ink-200">发现新版本 v{updateInfo.version}</div>
+                  <div className="text-[10px] text-ink-500">
+                    当前版本 v{updateInfo.currentVersion}
+                    {updateInfo.date && ` · ${updateInfo.date.slice(0, 10)}`}
+                  </div>
+                </div>
+                <button
+                  onClick={handleDownloadUpdate}
+                  disabled={downloadingUpdate}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-brand-600 hover:bg-brand-500 rounded-md transition-colors disabled:opacity-50"
+                >
+                  {downloadingUpdate ? (
+                    <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <line x1="12" y1="2" x2="12" y2="6" />
+                      <line x1="12" y1="18" x2="12" y2="22" />
+                      <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" />
+                      <line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
+                      <line x1="2" y1="12" x2="6" y2="12" />
+                      <line x1="18" y1="12" x2="22" y2="12" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  )}
+                  {downloadingUpdate
+                    ? downloadProgress?.total
+                      ? `${Math.round((downloadProgress.downloaded / downloadProgress.total) * 100)}%`
+                      : "下载中..."
+                    : "下载并安装"}
+                </button>
+              </div>
+              {downloadProgress && (
+                <div className="h-1.5 bg-ink-900 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-brand-500 transition-all duration-200"
+                    style={{
+                      width: downloadProgress.total
+                        ? `${Math.min(100, (downloadProgress.downloaded / downloadProgress.total) * 100)}%`
+                        : "0%",
+                    }}
+                  />
+                </div>
+              )}
+              {updateInfo.body && (
+                <div className="text-xs text-ink-400 whitespace-pre-line">{updateInfo.body}</div>
+              )}
+            </div>
+          ) : (
+            <div className="text-xs text-ink-500">点击上方按钮检查是否有新版本。</div>
+          )}
         </div>
 
         <div className="pt-4 border-t border-ink-800">

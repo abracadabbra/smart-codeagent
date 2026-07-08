@@ -348,7 +348,7 @@ fn is_connection_closed_error(err: &str) -> bool {
 }
 
 /// `initialize` 请求 params（共享给所有 transport）。
-fn initialize_params() -> Value {
+pub(crate) fn initialize_params() -> Value {
     serde_json::json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {},
@@ -560,6 +560,7 @@ while True:
             env: HashMap::new(),
             cwd: None,
             enabled_tools: Vec::new(),
+            ..Default::default()
         }
     }
 
