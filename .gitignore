@@ -61,8 +61,10 @@ pnpm-lock.yaml
 yarn.lock
 
 # OS
-Thumbs.dbsrc-tauri/icons/Square*.png
+Thumbs.db
+src-tauri/icons/Square*.png
 src-tauri/icons/StoreLogo.png
 src-tauri/icons/android/
 src-tauri/icons/ios/
 src-tauri/icons/icon.png
+src-tauri/icons/64x64.png
