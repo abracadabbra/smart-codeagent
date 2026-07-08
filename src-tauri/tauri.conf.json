@@ -39,7 +39,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlFRjcyQkREMDY4OTg5MQpSV1NSbUdqUXZYTHZDZUNDRkNzTDZMcVY2UGRyYjlJQUYrOXlIRVkrSTUrbE1hNUR0anpIQUc3Ngo=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4RUUyM0YxQ0UxNjMxMTIKUldRU01SYk84U1B1eURKOE5zSFBnUmVsQWYvS05XOGFDVmh4c0x0TlBlNkN6Wlhmdnh5NU5XT2gK",
       "endpoints": [
         "https://github.com/abracadabbra/smart-codeagent/releases/latest/download/latest.json"
       ]
