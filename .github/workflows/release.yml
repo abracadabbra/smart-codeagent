@@ -13,6 +13,10 @@ on:
         required: true
         default: "0.2.0"
 
+# Release 需要写 contents 才能创建/上传 Release 资源
+permissions:
+  contents: write
+
 jobs:
   # ───────────────────────────────────────────────────────────
   # Job 1: 创建 Release（只跑一次，后续构建依赖它的 upload_url）
