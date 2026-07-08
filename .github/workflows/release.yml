@@ -121,6 +121,24 @@ jobs:
       - name: 安装 Tauri CLI
         run: npm install -D @tauri-apps/cli@^2
 
+      # 调试：确认签名密钥和密码是否正确传入（只打印长度，不泄露值）
+      - name: 验证签名密钥配置
+        shell: bash
+        run: |
+          KEY_LEN=${#TAURI_SIGNING_PRIVATE_KEY}
+          PWD_LEN=${#TAURI_SIGNING_PRIVATE_KEY_PASSWORD}
+          KEY_PREFIX="${TAURI_SIGNING_PRIVATE_KEY:0:20}"
+          echo "TAURI_SIGNING_PRIVATE_KEY 长度: $KEY_LEN"
+          echo "TAURI_SIGNING_PRIVATE_KEY 前20字符: $KEY_PREFIX..."
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD 长度: $PWD_LEN"
+          # 期望：KEY_LEN 约 300+，PWD_LEN 为 32，KEY_PREFIX 为 "dW50cnVzdGVkIGNvbW1lbnQ6"
+          if [ "$PWD_LEN" -eq 0 ]; then
+            echo "⚠️ 密码为空！请检查 GitHub Secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
       # 构建并签名。签名密钥直接从 GitHub Secrets 传入 tauri-action env，
       # 避免经过 $GITHUB_ENV 中转导致首尾空白/换行问题。
       # TAURI_SIGNING_PRIVATE_KEY：私钥内容（base64）
