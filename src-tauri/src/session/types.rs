@@ -101,7 +101,11 @@ impl ChatMessage {
     }
 
     /// 便捷构造：assistant 纯文本消息（无工具调用）。
-    pub fn assistant_text(id: impl Into<String>, content: impl Into<String>, created_at: i64) -> Self {
+    pub fn assistant_text(
+        id: impl Into<String>,
+        content: impl Into<String>,
+        created_at: i64,
+    ) -> Self {
         Self {
             id: id.into(),
             role: "assistant".into(),

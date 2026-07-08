@@ -19,9 +19,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 use tokio::sync::RwLock;
 
-use crate::session::storage::{
-    atomic_write, validate_conversation_id,
-};
+use crate::session::storage::{atomic_write, validate_conversation_id};
 use crate::session::types::{ChatMessage, Conversation, ConversationListItem, SessionMessagesPage};
 
 /// 默认懒加载分页大小。
@@ -97,8 +95,7 @@ impl SessionStore {
     pub async fn load_index(&self) -> Result<Vec<ConversationListItem>, String> {
         // 确保 base_dir 存在
         if !self.base_dir.exists() {
-            fs::create_dir_all(&self.base_dir)
-                .map_err(|e| format!("create sessions dir: {e}"))?;
+            fs::create_dir_all(&self.base_dir).map_err(|e| format!("create sessions dir: {e}"))?;
         }
 
         let items = self.read_index_file().await.unwrap_or_else(|err| {
@@ -142,10 +139,9 @@ impl SessionStore {
     /// 读 `index.json`。
     async fn read_index_file(&self) -> Result<Vec<ConversationListItem>, String> {
         let path = self.base_dir.join("index.json");
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("read index.json: {e}"))?;
-        let items: Vec<ConversationListItem> = serde_json::from_str(&content)
-            .map_err(|e| format!("parse index.json: {e}"))?;
+        let content = fs::read_to_string(&path).map_err(|e| format!("read index.json: {e}"))?;
+        let items: Vec<ConversationListItem> =
+            serde_json::from_str(&content).map_err(|e| format!("parse index.json: {e}"))?;
         Ok(items)
     }
 
@@ -155,9 +151,7 @@ impl SessionStore {
         if !self.base_dir.exists() {
             return Ok(items);
         }
-        for entry in fs::read_dir(&self.base_dir)
-            .map_err(|e| format!("read sessions dir: {e}"))?
-        {
+        for entry in fs::read_dir(&self.base_dir).map_err(|e| format!("read sessions dir: {e}"))? {
             let entry = entry.map_err(|e| format!("read dir entry: {e}"))?;
             let path = entry.path();
             if !path.is_dir() {
@@ -177,7 +171,10 @@ impl SessionStore {
             let meta: Conversation = match serde_json::from_str(&content) {
                 Ok(m) => m,
                 Err(e) => {
-                    tracing::warn!("scan_meta_files: skip {}: parse error: {e}", meta_path.display());
+                    tracing::warn!(
+                        "scan_meta_files: skip {}: parse error: {e}",
+                        meta_path.display()
+                    );
                     continue;
                 }
             };
@@ -216,8 +213,8 @@ impl SessionStore {
 
         // 写 meta.json
         let meta_path = self.meta_path(&conv_id)?;
-        let meta_json = serde_json::to_string_pretty(&conv)
-            .map_err(|e| format!("serialize meta: {e}"))?;
+        let meta_json =
+            serde_json::to_string_pretty(&conv).map_err(|e| format!("serialize meta: {e}"))?;
         atomic_write(&meta_path, &meta_json, "meta")?;
 
         // 更新内存缓存
@@ -324,11 +321,7 @@ impl SessionStore {
     /// 追加消息（append 内存 + append messages.jsonl + 更新 meta.updated_at/message_count）。
     ///
     /// 写穿一致性：先写磁盘成功，再更新内存。
-    pub async fn append_message(
-        &self,
-        conv_id: &str,
-        msg: ChatMessage,
-    ) -> Result<(), String> {
+    pub async fn append_message(&self, conv_id: &str, msg: ChatMessage) -> Result<(), String> {
         validate_conversation_id(conv_id)?;
 
         // 1. append messages.jsonl
@@ -336,12 +329,10 @@ impl SessionStore {
         // 确保会话目录存在
         if let Some(parent) = msg_path.parent() {
             if !parent.exists() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("create session dir: {e}"))?;
+                fs::create_dir_all(parent).map_err(|e| format!("create session dir: {e}"))?;
             }
         }
-        let line = serde_json::to_string(&msg)
-            .map_err(|e| format!("serialize message: {e}"))?;
+        let line = serde_json::to_string(&msg).map_err(|e| format!("serialize message: {e}"))?;
         {
             let mut file = OpenOptions::new()
                 .create(true)
@@ -364,8 +355,8 @@ impl SessionStore {
         }
 
         // 3. atomic_write meta.json（updated_at / message_count 变了）
-        let meta_json = serde_json::to_string_pretty(&data.meta)
-            .map_err(|e| format!("serialize meta: {e}"))?;
+        let meta_json =
+            serde_json::to_string_pretty(&data.meta).map_err(|e| format!("serialize meta: {e}"))?;
         let meta_path = self.meta_path(conv_id)?;
         // 注意：这里不用 await，atomic_write 是同步函数
         drop(sessions);
@@ -396,8 +387,8 @@ impl SessionStore {
             data.meta.pinned = p;
         }
         let updated = data.meta.clone();
-        let meta_json = serde_json::to_string_pretty(&updated)
-            .map_err(|e| format!("serialize meta: {e}"))?;
+        let meta_json =
+            serde_json::to_string_pretty(&updated).map_err(|e| format!("serialize meta: {e}"))?;
         drop(sessions);
 
         let meta_path = self.meta_path(conv_id)?;
@@ -412,8 +403,7 @@ impl SessionStore {
         validate_conversation_id(conv_id)?;
         let dir = self.session_dir(conv_id)?;
         if dir.exists() {
-            fs::remove_dir_all(&dir)
-                .map_err(|e| format!("delete session dir: {e}"))?;
+            fs::remove_dir_all(&dir).map_err(|e| format!("delete session dir: {e}"))?;
         }
         {
             let mut sessions = self.sessions.write().await;
@@ -502,8 +492,8 @@ impl SessionStore {
             b.updated_at.cmp(&a.updated_at)
         });
 
-        let json = serde_json::to_string_pretty(&items)
-            .map_err(|e| format!("serialize index: {e}"))?;
+        let json =
+            serde_json::to_string_pretty(&items).map_err(|e| format!("serialize index: {e}"))?;
         let path = self.base_dir.join("index.json");
         atomic_write(&path, &json, "index")
     }
@@ -545,8 +535,7 @@ impl SessionStore {
     /// 从磁盘读单个 meta.json（缓存未命中时用）。
     fn read_meta_from_disk(&self, conv_id: &str) -> Result<Conversation, String> {
         let path = self.meta_path(conv_id)?;
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("read meta.json: {e}"))?;
+        let content = fs::read_to_string(&path).map_err(|e| format!("read meta.json: {e}"))?;
         serde_json::from_str(&content).map_err(|e| format!("parse meta.json: {e}"))
     }
 
@@ -753,10 +742,7 @@ mod tests {
         let conv = store.create_session().await.unwrap();
         assert!(!conv.pinned);
 
-        let updated = store
-            .update_meta(&conv.id, None, Some(true))
-            .await
-            .unwrap();
+        let updated = store.update_meta(&conv.id, None, Some(true)).await.unwrap();
         assert!(updated.pinned);
 
         let updated2 = store
@@ -828,11 +814,9 @@ mod tests {
             .join("sessions")
             .join(&conv.id)
             .join("messages.jsonl");
-        let valid_line1 =
-            r#"{"id":"msg_1","role":"user","content":"hello","createdAt":1000}"#;
+        let valid_line1 = r#"{"id":"msg_1","role":"user","content":"hello","createdAt":1000}"#;
         let corrupted_line = r#"{"id":"msg_2","role":"user","content":INVALID}"#;
-        let valid_line2 =
-            r#"{"id":"msg_3","role":"user","content":"world","createdAt":2000}"#;
+        let valid_line2 = r#"{"id":"msg_3","role":"user","content":"world","createdAt":2000}"#;
         fs::write(
             &messages_path,
             format!("{valid_line1}\n{corrupted_line}\n{valid_line2}\n"),

@@ -13,9 +13,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::agent::tools::{
-    AskUserPromptPayload, AskUserResponseResult, ToolCallRecord,
-};
+use crate::agent::tools::{AskUserPromptPayload, AskUserResponseResult, ToolCallRecord};
 
 pub type AgentHostFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 

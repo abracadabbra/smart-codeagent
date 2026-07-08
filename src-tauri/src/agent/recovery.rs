@@ -6,8 +6,8 @@
 //! - AuthFailed → NotifyUser（直接向上返回错误，由 runner emit 给前端）
 //! - ToolFailed / ToolNotFound → ReportAndContinue（在 rounds.rs 已实现）
 
-use crate::agent::context::trim_messages;
 use crate::agent::Message;
+use crate::agent::context::trim_messages;
 use crate::providers::{ProviderError, ProviderResult};
 use std::future::Future;
 use std::time::Duration;
@@ -68,9 +68,7 @@ impl RecoverableError {
 
 fn classify_http_message(msg: &str) -> RecoverableError {
     let lower = msg.to_lowercase();
-    if lower.contains("429")
-        || lower.contains("rate limit")
-        || lower.contains("too many requests")
+    if lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests")
     {
         return RecoverableError::RateLimited;
     }
@@ -275,17 +273,12 @@ pub fn error_message_for_user(err: &ProviderError) -> String {
     match err {
         ProviderError::Http(msg) => format!("网络错误: {msg}"),
         ProviderError::SseParse(msg) => format!("流解析错误: {msg}"),
-        ProviderError::Api { status, message } => {
-            let reason = match status {
-                401 | 403 => {
-                    "API Key 无效或已过期，请检查设置面板中的 Provider 配置。".to_string()
-                }
-                429 => "请求过于频繁，请稍后再试。".to_string(),
-                500..=599 => "LLM 服务商暂时不可用，请稍后再试。".to_string(),
-                _ => format!("API 错误 ({status}): {message}"),
-            };
-            reason
-        }
+        ProviderError::Api { status, message } => match status {
+            401 | 403 => "API Key 无效或已过期，请检查设置面板中的 Provider 配置。".to_string(),
+            429 => "请求过于频繁，请稍后再试。".to_string(),
+            500..=599 => "LLM 服务商暂时不可用，请稍后再试。".to_string(),
+            _ => format!("API 错误 ({status}): {message}"),
+        },
         ProviderError::Config(msg) => format!("配置错误: {msg}"),
     }
 }

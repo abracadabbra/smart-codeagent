@@ -18,6 +18,6 @@ pub use client::{McpEventSink, McpSession, StdioMcpClient};
 pub use http_client::HttpMcpClient;
 pub use manager::{McpManager, TauriEventSink};
 pub use types::{
-    looks_sensitive_tool, McpServerState, McpServerStatePayload, McpTool, McpToolCallResult,
+    McpServerState, McpServerStatePayload, McpTool, McpToolCallResult, looks_sensitive_tool,
     parse_mcp_name, parse_tool_result, tool_definition_from_mcp,
 };

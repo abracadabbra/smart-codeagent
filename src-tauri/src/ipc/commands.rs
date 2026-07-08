@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 
 use crate::agent::host_impl::TauriHost;
-use crate::agent::runner::{run_agent_loop, SessionRunner};
+use crate::agent::runner::{SessionRunner, run_agent_loop};
 use crate::agent::tools::AskUserResponseResult;
 use crate::agent::types::AgentRunConfig;
 use crate::mcp::{McpManager, McpServerState};
@@ -64,16 +64,16 @@ pub async fn send_message(
     let session_store_arc = session_store.inner().clone();
 
     // 1. busy 守门（ChatSendReservation，drop 时自动释放）
-    let reservation = match ChatSendReservation::try_acquire(app_state_arc.clone(), &conversation_id)
-    {
-        Some(r) => r,
-        None => {
-            return Ok(SendResult {
-                success: false,
-                error: Some("session busy".into()),
-            })
-        }
-    };
+    let reservation =
+        match ChatSendReservation::try_acquire(app_state_arc.clone(), &conversation_id) {
+            Some(r) => r,
+            None => {
+                return Ok(SendResult {
+                    success: false,
+                    error: Some("session busy".into()),
+                });
+            }
+        };
 
     // 2. generation（message_id 由前端传入，用于 emit 事件路由）
     let generation = app_state_arc.new_run_generation(&conversation_id);
@@ -191,10 +191,7 @@ pub struct ApproveToolArgs {
 }
 
 #[tauri::command]
-pub async fn approve_tool(
-    app: AppHandle,
-    args: ApproveToolArgs,
-) -> Result<(), String> {
+pub async fn approve_tool(app: AppHandle, args: ApproveToolArgs) -> Result<(), String> {
     let host = app
         .try_state::<Arc<TauriHost>>()
         .ok_or_else(|| "TauriHost not managed".to_string())?;
@@ -212,10 +209,7 @@ pub struct AnswerAskUserArgs {
 }
 
 #[tauri::command]
-pub async fn answer_ask_user(
-    app: AppHandle,
-    args: AnswerAskUserArgs,
-) -> Result<(), String> {
+pub async fn answer_ask_user(app: AppHandle, args: AnswerAskUserArgs) -> Result<(), String> {
     let host = app
         .try_state::<Arc<TauriHost>>()
         .ok_or_else(|| "TauriHost not managed".to_string())?;
@@ -241,7 +235,10 @@ pub async fn get_session_state(
     app_state: State<'_, Arc<AppState>>,
     conversation_id: String,
 ) -> Result<String, String> {
-    Ok(app_state.get_session_state(&conversation_id).as_str().to_string())
+    Ok(app_state
+        .get_session_state(&conversation_id)
+        .as_str()
+        .to_string())
 }
 
 /// 列出所有非 Idle 状态的会话（前端启动时同步 + 诊断"卡住"的会话）。
@@ -270,9 +267,7 @@ pub async fn force_reset_session(
 
 /// 列出 settings.json 中配置的所有 MCP server（前端 StatusBar / 设置面板用）。
 #[tauri::command]
-pub async fn list_mcp_servers(
-    app: AppHandle,
-) -> Result<Vec<ChatMcpServer>, String> {
+pub async fn list_mcp_servers(app: AppHandle) -> Result<Vec<ChatMcpServer>, String> {
     let settings = app
         .try_state::<Arc<Mutex<Settings>>>()
         .ok_or_else(|| "Settings not managed".to_string())?;
@@ -295,10 +290,7 @@ pub async fn list_mcp_server_states(
 /// 保存配置到 settings.json。
 /// 前端修改配置后调用此命令，修改会立即持久化到磁盘。
 #[tauri::command]
-pub async fn save_settings(
-    app: AppHandle,
-    settings: Settings,
-) -> Result<(), String> {
+pub async fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     let settings_state = app
         .try_state::<Arc<Mutex<Settings>>>()
         .ok_or_else(|| "Settings not managed".to_string())?;
@@ -313,9 +305,7 @@ pub async fn save_settings(
 /// 热重载配置：从磁盘重新加载 settings.json，然后 McpManager 重新连接所有 server。
 /// 无需重启应用即可应用新配置。
 #[tauri::command]
-pub async fn reload_settings(
-    app: AppHandle,
-) -> Result<Vec<ChatMcpServer>, String> {
+pub async fn reload_settings(app: AppHandle) -> Result<Vec<ChatMcpServer>, String> {
     let settings_state = app
         .try_state::<Arc<Mutex<Settings>>>()
         .ok_or_else(|| "Settings not managed".to_string())?;
@@ -336,10 +326,7 @@ pub async fn reload_settings(
 /// 测试单个 MCP server 是否能正常连接（不注册到池，测试完毕立即断开）。
 /// 用于前端"测试连接"按钮。
 #[tauri::command]
-pub async fn test_mcp_server(
-    app: AppHandle,
-    server: ChatMcpServer,
-) -> Result<(), String> {
+pub async fn test_mcp_server(app: AppHandle, server: ChatMcpServer) -> Result<(), String> {
     let mcp_manager = app
         .try_state::<Arc<McpManager>>()
         .ok_or_else(|| "McpManager not managed".to_string())?;
@@ -349,14 +336,11 @@ pub async fn test_mcp_server(
 
 /// 获取完整 settings 配置（用于前端读取 theme 等全局设置）。
 #[tauri::command]
-pub async fn get_settings(
-    app: AppHandle,
-) -> Result<String, String> {
+pub async fn get_settings(app: AppHandle) -> Result<String, String> {
     let settings_state = app
         .try_state::<Arc<Mutex<Settings>>>()
         .ok_or_else(|| "Settings not managed".to_string())?;
 
     let settings = settings_state.lock().await.clone();
-    serde_json::to_string(&settings)
-        .map_err(|e| format!("序列化 settings 失败: {e}"))
+    serde_json::to_string(&settings).map_err(|e| format!("序列化 settings 失败: {e}"))
 }

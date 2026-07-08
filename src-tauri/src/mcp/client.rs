@@ -15,8 +15,8 @@ use std::{
     collections::{HashMap, VecDeque},
     process::Stdio,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -25,7 +25,7 @@ use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
-    sync::{oneshot, Mutex},
+    sync::{Mutex, oneshot},
     task::JoinHandle,
     time::timeout,
 };
@@ -545,7 +545,8 @@ while True:
         let mut path = std::env::temp_dir();
         path.push(format!("sca-fake-mcp-{}.py", uuid::Uuid::new_v4()));
         let mut file = std::fs::File::create(&path).expect("create fake server");
-        file.write_all(script.as_bytes()).expect("write fake server");
+        file.write_all(script.as_bytes())
+            .expect("write fake server");
         path
     }
 
@@ -653,13 +654,11 @@ while True:
         server
             .env
             .insert("SCA_DELAY_CALL_MS".to_string(), "2500".to_string());
-        server
-            .env
-            .insert("SCA_CALL_MARKER".to_string(), {
-                let mut p = std::env::temp_dir();
-                p.push(format!("sca-marker-{}.txt", uuid::Uuid::new_v4()));
-                p.to_string_lossy().into_owned()
-            });
+        server.env.insert("SCA_CALL_MARKER".to_string(), {
+            let mut p = std::env::temp_dir();
+            p.push(format!("sca-marker-{}.txt", uuid::Uuid::new_v4()));
+            p.to_string_lossy().into_owned()
+        });
 
         // 用最小 timeout（1s，受 .max(1_000) 约束）；server 延迟 2.5s 远超之。
         let client = make_client(server.clone(), 1_000);
@@ -700,13 +699,13 @@ while True:
         // 触发握手 + 拉一次工具，确保 stderr task 启动。
         let _ = client.list_tools().await.expect("list_tools ok");
 
-        let arc = client
-            .connect()
-            .await
-            .expect("session should be present");
+        let arc = client.connect().await.expect("session should be present");
         let s = arc.lock().await;
         let tail = s.stderr_tail_text().await;
-        assert!(tail.contains("hello-stderr"), "stderr tail should contain msg, got: {tail}");
+        assert!(
+            tail.contains("hello-stderr"),
+            "stderr tail should contain msg, got: {tail}"
+        );
 
         client.disconnect().await;
         let _ = std::fs::remove_file(&script);
@@ -720,10 +719,9 @@ while True:
 
         let c1 = client.clone();
         let c2 = client.clone();
-        let (r1, r2) = tokio::join!(
-            async move { c1.connect().await.map(|_| ()) },
-            async move { c2.connect().await.map(|_| ()) },
-        );
+        let (r1, r2) = tokio::join!(async move { c1.connect().await.map(|_| ()) }, async move {
+            c2.connect().await.map(|_| ())
+        },);
         r1.expect("connect one ok");
         r2.expect("connect two ok");
 
@@ -751,8 +749,14 @@ while True:
         let c1 = client.clone();
         let c2 = client.clone();
         let (r1, r2) = tokio::join!(
-            async move { c1.call_tool("echo", serde_json::json!({ "text": "one" })).await },
-            async move { c2.call_tool("echo", serde_json::json!({ "text": "two" })).await },
+            async move {
+                c1.call_tool("echo", serde_json::json!({ "text": "one" }))
+                    .await
+            },
+            async move {
+                c2.call_tool("echo", serde_json::json!({ "text": "two" }))
+                    .await
+            },
         );
         let r1 = r1.expect("call one ok");
         let r2 = r2.expect("call two ok");
@@ -816,7 +820,10 @@ while True:
             Some(MCP_PROTOCOL_VERSION)
         );
         assert_eq!(
-            params.get("clientInfo").and_then(|v| v.get("name")).and_then(|v| v.as_str()),
+            params
+                .get("clientInfo")
+                .and_then(|v| v.get("name"))
+                .and_then(|v| v.as_str()),
             Some("smart-codeagent")
         );
     }

@@ -29,14 +29,17 @@ pub struct AnthropicConfig {
 impl AnthropicConfig {
     /// 从环境变量加载，缺失返回 Err（而非 panic），由调用方决定如何处理。
     pub fn from_env() -> Result<Self, ConfigError> {
-        let api_key = std::env::var("LLM_API_KEY")
-            .map_err(|_| ConfigError::MissingEnv("LLM_API_KEY"))?;
+        let api_key =
+            std::env::var("LLM_API_KEY").map_err(|_| ConfigError::MissingEnv("LLM_API_KEY"))?;
         let base_url = std::env::var("LLM_BASE_URL")
             .unwrap_or_else(|_| "https://token.sensenova.cn".to_string());
-        let model = std::env::var("LLM_MODEL")
-            .unwrap_or_else(|_| "deepseek-v4-flash".to_string());
+        let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".to_string());
 
-        Ok(Self { api_key, base_url, model })
+        Ok(Self {
+            api_key,
+            base_url,
+            model,
+        })
     }
 
     /// 从 settings.json 中的 ProviderConfig 构造。

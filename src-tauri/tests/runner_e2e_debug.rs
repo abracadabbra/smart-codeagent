@@ -11,12 +11,14 @@
 use std::sync::Arc;
 
 use smart_codeagent_lib::agent::host::{AgentHost, AgentHostFuture};
-use smart_codeagent_lib::agent::runner::{run_agent_loop, SessionRunner};
-use smart_codeagent_lib::agent::tools::{AskUserPromptPayload, AskUserResponseResult, ToolCallRecord};
+use smart_codeagent_lib::agent::runner::{SessionRunner, run_agent_loop};
+use smart_codeagent_lib::agent::tools::{
+    AskUserPromptPayload, AskUserResponseResult, ToolCallRecord,
+};
 use smart_codeagent_lib::agent::types::AgentRunConfig;
-use smart_codeagent_lib::state::AppState;
 use smart_codeagent_lib::session::store::SessionStore;
 use smart_codeagent_lib::settings::Settings;
+use smart_codeagent_lib::state::AppState;
 
 use tempfile::TempDir;
 
@@ -68,7 +70,10 @@ impl AgentHost for MockHost {
         _message_id: &str,
         record: &ToolCallRecord,
     ) {
-        eprintln!("[MOCK] emit_tool_record: name={}, status={:?}", record.name, record.status);
+        eprintln!(
+            "[MOCK] emit_tool_record: name={}, status={:?}",
+            record.name, record.status
+        );
     }
 
     fn request_tool_approval<'a>(
@@ -98,7 +103,8 @@ impl AgentHost for MockHost {
     }
 
     fn is_generation_active(&self, conversation_id: &str, generation: u64) -> bool {
-        self.app_state.is_generation_active(conversation_id, generation)
+        self.app_state
+            .is_generation_active(conversation_id, generation)
     }
 }
 
@@ -109,9 +115,18 @@ async fn run_agent_loop_e2e_debug() {
     let _ = dotenvy::dotenv();
 
     eprintln!("=== E2E DEBUG TEST START ===");
-    eprintln!("[ENV] LLM_API_KEY set: {}", std::env::var("LLM_API_KEY").is_ok());
-    eprintln!("[ENV] LLM_BASE_URL: {}", std::env::var("LLM_BASE_URL").unwrap_or_default());
-    eprintln!("[ENV] LLM_MODEL: {}", std::env::var("LLM_MODEL").unwrap_or_default());
+    eprintln!(
+        "[ENV] LLM_API_KEY set: {}",
+        std::env::var("LLM_API_KEY").is_ok()
+    );
+    eprintln!(
+        "[ENV] LLM_BASE_URL: {}",
+        std::env::var("LLM_BASE_URL").unwrap_or_default()
+    );
+    eprintln!(
+        "[ENV] LLM_MODEL: {}",
+        std::env::var("LLM_MODEL").unwrap_or_default()
+    );
 
     // 1. 准备 SessionStore（临时目录）
     let tmp = TempDir::new().expect("tempdir");
@@ -135,7 +150,10 @@ async fn run_agent_loop_e2e_debug() {
         history,
         generation,
     );
-    session.push_user(&store, "say hello in one word").await.expect("push_user");
+    session
+        .push_user(&store, "say hello in one word")
+        .await
+        .expect("push_user");
     eprintln!("[SETUP] pushed user message");
 
     // 4. 准备 host + config + settings
@@ -158,8 +176,12 @@ async fn run_agent_loop_e2e_debug() {
 
     match &result {
         Ok(r) => {
-            eprintln!("[RESULT] OK: rounds={}, final_text_len={}, tool_records={}",
-                r.rounds, r.final_text.len(), r.tool_records.len());
+            eprintln!(
+                "[RESULT] OK: rounds={}, final_text_len={}, tool_records={}",
+                r.rounds,
+                r.final_text.len(),
+                r.tool_records.len()
+            );
             eprintln!("[RESULT] final_text: {:?}", r.final_text);
         }
         Err(e) => {
@@ -168,11 +190,18 @@ async fn run_agent_loop_e2e_debug() {
     }
 
     // 5. 检查持久化
-    let messages = store.load_messages(&conv_id).await.expect("load_messages after run");
+    let messages = store
+        .load_messages(&conv_id)
+        .await
+        .expect("load_messages after run");
     eprintln!("[PERSIST] messages.jsonl count: {}", messages.len());
     for (i, m) in messages.iter().enumerate() {
-        eprintln!("[PERSIST] msg[{}]: role={}, content_len={}",
-            i, m.role, m.content.as_ref().map(|s| s.len()).unwrap_or(0));
+        eprintln!(
+            "[PERSIST] msg[{}]: role={}, content_len={}",
+            i,
+            m.role,
+            m.content.as_ref().map(|s| s.len()).unwrap_or(0)
+        );
     }
 
     eprintln!("=== E2E DEBUG TEST END ===");

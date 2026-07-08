@@ -23,8 +23,8 @@ use smart_codeagent_lib::agent::tools::{
 };
 use smart_codeagent_lib::ipc::events::{
     AgentApprovalRequestPayload, AgentAskUserPromptPayload, AgentPartialAssistantPayload,
-    AgentStreamDeltaPayload, AgentStreamDonePayload, AgentToolRejectedPayload,
-    AgentToolRecordPayload, SessionCreatedPayload, SessionDeletedPayload, SessionStatePayload,
+    AgentStreamDeltaPayload, AgentStreamDonePayload, AgentToolRecordPayload,
+    AgentToolRejectedPayload, SessionCreatedPayload, SessionDeletedPayload, SessionStatePayload,
     SessionUpdatedPayload,
 };
 use smart_codeagent_lib::session::types::Conversation;
@@ -75,10 +75,19 @@ fn agent_token_payload_serializes_camel_case() {
         text: "hi".into(),
     };
     let json = serde_json::to_value(&p).unwrap();
-    assert_eq!(json["conversationId"], "conv_abc", "前端 useAgentEvents.ts 按 conversationId 路由");
-    assert_eq!(json["msgId"], "asst-1", "前端 useAgentEvents.ts 依赖 msgId 字段名");
+    assert_eq!(
+        json["conversationId"], "conv_abc",
+        "前端 useAgentEvents.ts 按 conversationId 路由"
+    );
+    assert_eq!(
+        json["msgId"], "asst-1",
+        "前端 useAgentEvents.ts 依赖 msgId 字段名"
+    );
     assert_eq!(json["text"], "hi");
-    assert!(json.get("conversation_id").is_none(), "不能出现 snake_case 字段");
+    assert!(
+        json.get("conversation_id").is_none(),
+        "不能出现 snake_case 字段"
+    );
     assert!(json.get("msg_id").is_none());
 }
 
@@ -132,14 +141,26 @@ fn send_message_args_serializes_camel_case() {
         run_id: "run-1".into(),
     };
     let json = serde_json::to_value(&args).unwrap();
-    assert_eq!(json["conversationId"], "conv_abc", "前端 invoke 用 conversationId");
+    assert_eq!(
+        json["conversationId"], "conv_abc",
+        "前端 invoke 用 conversationId"
+    );
     assert_eq!(json["text"], "hi");
     assert_eq!(json["runId"], "run-1", "前端 invoke 用 runId");
-    assert!(json.get("conversation_id").is_none(), "Tauri 2 不做 snake↔camel 转换");
+    assert!(
+        json.get("conversation_id").is_none(),
+        "Tauri 2 不做 snake↔camel 转换"
+    );
     assert!(json.get("run_id").is_none());
     // 旧字段 assistantId / generation 不应出现（后端生成）
-    assert!(json.get("assistantId").is_none(), "assistantId 已由后端生成，前端不再传");
-    assert!(json.get("generation").is_none(), "generation 已由后端生成，前端不再传");
+    assert!(
+        json.get("assistantId").is_none(),
+        "assistantId 已由后端生成，前端不再传"
+    );
+    assert!(
+        json.get("generation").is_none(),
+        "generation 已由后端生成，前端不再传"
+    );
 }
 
 // ============================================================================
@@ -233,7 +254,10 @@ fn tool_record_payload_serializes_camel_case() {
     assert_eq!(json["record"]["durationMs"], 15);
     assert_eq!(json["record"]["startedAt"], 1000);
     assert_eq!(json["record"]["resultPreview"], "file contents");
-    assert!(json["record"].get("duration_ms").is_none(), "嵌套 snake_case 泄漏");
+    assert!(
+        json["record"].get("duration_ms").is_none(),
+        "嵌套 snake_case 泄漏"
+    );
     assert!(json.get("conversation_id").is_none());
 }
 
@@ -305,9 +329,7 @@ fn partial_assistant_payload_serializes_camel_case() {
         run_id: "run-1".into(),
         msg_id: "asst-1".into(),
         records: vec![sample_tool_record()],
-        api_messages: vec![
-            serde_json::json!({"role": "user", "content": "hi"}),
-        ],
+        api_messages: vec![serde_json::json!({"role": "user", "content": "hi"})],
     };
     let json = serde_json::to_value(&p).unwrap();
     assert_eq!(json["conversationId"], "conv_abc");
@@ -421,7 +443,10 @@ fn mcp_server_state_payload_serializes_camel_case() {
         state: McpServerState::Connected,
     };
     let json = serde_json::to_value(&p).unwrap();
-    assert_eq!(json["serverId"], "fs", "前端 useAgentEvents.ts 依赖 serverId");
+    assert_eq!(
+        json["serverId"], "fs",
+        "前端 useAgentEvents.ts 依赖 serverId"
+    );
     assert_eq!(json["state"]["kind"], "connected");
     assert!(json.get("server_id").is_none(), "snake_case 泄漏");
 
@@ -442,13 +467,19 @@ fn mcp_server_state_payload_serializes_camel_case() {
         server_id: "x".into(),
         state: McpServerState::Connecting,
     };
-    assert_eq!(serde_json::to_value(&p_conn).unwrap()["state"]["kind"], "connecting");
+    assert_eq!(
+        serde_json::to_value(&p_conn).unwrap()["state"]["kind"],
+        "connecting"
+    );
 
     let p_disc = McpServerStatePayload {
         server_id: "x".into(),
         state: McpServerState::Disconnected,
     };
-    assert_eq!(serde_json::to_value(&p_disc).unwrap()["state"]["kind"], "disconnected");
+    assert_eq!(
+        serde_json::to_value(&p_disc).unwrap()["state"]["kind"],
+        "disconnected"
+    );
 }
 
 #[test]
@@ -484,7 +515,10 @@ fn chat_mcp_server_round_trip_camel_case() {
     // 反向序列化仍为 camelCase
     let out = serde_json::to_value(&server).unwrap();
     assert_eq!(out["id"], "filesystem");
-    assert_eq!(out["enabledTools"], serde_json::json!(["read_file", "write_file"]));
+    assert_eq!(
+        out["enabledTools"],
+        serde_json::json!(["read_file", "write_file"])
+    );
     assert!(out.get("enabled_tools").is_none(), "snake_case 泄漏到 wire");
 
     // 默认值：enabled=true, transport="stdio"（缺省时）
@@ -528,8 +562,14 @@ fn session_created_payload_serializes_camel_case() {
     assert_eq!(json["conversation"]["pinned"], false);
     assert_eq!(json["conversation"]["messageCount"], 5);
     // 嵌套字段不能有 snake_case
-    assert!(json["conversation"].get("created_at").is_none(), "嵌套 snake_case 泄漏");
-    assert!(json["conversation"].get("message_count").is_none(), "嵌套 snake_case 泄漏");
+    assert!(
+        json["conversation"].get("created_at").is_none(),
+        "嵌套 snake_case 泄漏"
+    );
+    assert!(
+        json["conversation"].get("message_count").is_none(),
+        "嵌套 snake_case 泄漏"
+    );
 }
 
 #[test]
@@ -552,7 +592,10 @@ fn session_deleted_payload_serializes_camel_case() {
         conversation_id: "conv_abc123".into(),
     };
     let json = serde_json::to_value(&p).unwrap();
-    assert_eq!(json["conversationId"], "conv_abc123", "前端按 conversationId 路由 delete 事件");
+    assert_eq!(
+        json["conversationId"], "conv_abc123",
+        "前端按 conversationId 路由 delete 事件"
+    );
     assert!(json.get("conversation_id").is_none(), "snake_case 泄漏");
 }
 

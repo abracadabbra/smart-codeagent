@@ -12,14 +12,14 @@
 //!
 //! 本模块与 `client.rs::StdioMcpClient` 保持相同对外接口，方便 `manager.rs` 统一调度。
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
 use reqwest::{Client, RequestBuilder, header};
 use serde_json::Value;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
@@ -38,13 +38,13 @@ fn parse_sse_event(chunk: &str) -> Option<(String, String)> {
     let mut found_data = false;
 
     for line in chunk.lines() {
-        if line.starts_with("event:") {
-            event = line["event:".len()..].trim().to_string();
-        } else if line.starts_with("data:") {
+        if let Some(rest) = line.strip_prefix("event:") {
+            event = rest.trim().to_string();
+        } else if let Some(rest) = line.strip_prefix("data:") {
             if found_data {
                 data.push('\n');
             }
-            data.push_str(line["data:".len()..].trim_start());
+            data.push_str(rest.trim_start());
             found_data = true;
         } else if line.is_empty() {
             // 空行表示事件结束
@@ -61,12 +61,16 @@ fn parse_sse_event(chunk: &str) -> Option<(String, String)> {
     None
 }
 
+/// 在途请求映射：JSON-RPC id → oneshot sender。
+type PendingMap =
+    Arc<Mutex<std::collections::HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
+
 /// HTTP/SSE 会话：持有 endpoint URL、在途请求映射、SSE reader task。
 pub struct HttpMcpSession {
     /// POST JSON-RPC 消息的目标地址（SSE 握手时由服务端下发）。
     endpoint: String,
     next_id: AtomicU64,
-    pending: Arc<Mutex<std::collections::HashMap<u64, oneshot::Sender<Result<Value, String>>>>>,
+    pending: PendingMap,
     reader_task: JoinHandle<()>,
     /// 握手 `initialize` 返回的 `serverInfo`。
     pub server_info: Option<Value>,
@@ -151,7 +155,6 @@ impl HttpMcpSession {
             .map_err(|err| format!("MCP HTTP POST error status: {err}"))?;
         Ok(())
     }
-
 }
 
 /// 单个 HTTP/SSE MCP server client：持久 session + 单飞门闩 + 死连接重连。
@@ -228,8 +231,7 @@ impl HttpMcpClient {
             .ok_or_else(|| "MCP HTTP server URL is empty".to_string())?;
 
         let base_url = url.trim_end_matches('/').to_string();
-        let pending: Arc<Mutex<std::collections::HashMap<u64, oneshot::Sender<Result<Value, String>>>>> =
-            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let pending: PendingMap = Arc::new(Mutex::new(std::collections::HashMap::new()));
 
         // 1. 建立 SSE 流
         let mut builder = self
@@ -282,7 +284,11 @@ impl HttpMcpClient {
             endpoint
         } else {
             // 相对路径，拼到 base_url
-            format!("{}/{}", base_url.trim_end_matches('/'), endpoint.trim_start_matches('/'))
+            format!(
+                "{}/{}",
+                base_url.trim_end_matches('/'),
+                endpoint.trim_start_matches('/')
+            )
         };
 
         info!(
@@ -294,7 +300,9 @@ impl HttpMcpClient {
         let pending_for_reader = pending.clone();
         let reader_task = tokio::spawn(async move {
             let mut buffer = String::new();
-            while let Ok(Some(result)) = tokio::time::timeout(Duration::from_secs(30), stream.next()).await {
+            while let Ok(Some(result)) =
+                tokio::time::timeout(Duration::from_secs(30), stream.next()).await
+            {
                 match result {
                     Ok(bytes) => {
                         buffer.push_str(&String::from_utf8_lossy(&bytes));

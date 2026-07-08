@@ -66,11 +66,19 @@ pub struct Message {
     pub content: Option<String>,
     /// OpenAI tool_calls 数组（仅 assistant 调工具时存在）
     /// 注意：字段名强制 snake_case，匹配 OpenAI API 要求
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "tool_calls")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "tool_calls"
+    )]
     pub tool_calls: Option<Vec<OpenAiToolCall>>,
     /// OpenAI tool_call_id（仅 role="tool" 时存在）
     /// 注意：字段名强制 snake_case，匹配 OpenAI API 要求
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "tool_call_id")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "tool_call_id"
+    )]
     pub tool_call_id: Option<String>,
 }
 
@@ -132,7 +140,7 @@ pub mod runner;
 pub mod tools;
 pub mod types;
 
-pub use runner::{run_agent_loop, SessionRunner};
+pub use runner::{SessionRunner, run_agent_loop};
 pub use tools::{
     AskUserAnswer, AskUserOption, AskUserPromptPayload, AskUserQuestion, AskUserResponseResult,
     ChatToolDefinition, Tool, ToolCallRecord, ToolCallStatus, ToolContext, ToolError, ToolFuture,

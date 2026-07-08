@@ -24,9 +24,9 @@ use crate::agent::tools::{
     AskUserPromptPayload, AskUserResponseResult, ToolCallRecord, ToolContext,
 };
 use crate::ipc::events::{
-    emit_stream_delta, emit_stream_done, emit_tool_record, AgentAskUserPromptPayload,
-    AgentPartialAssistantPayload, AgentToolRejectedPayload, AgentApprovalRequestPayload,
-    EVT_APPROVAL_REQUEST, EVT_ASK_USER_PROMPT, EVT_PARTIAL_ASSISTANT, EVT_TOOL_REJECTED,
+    AgentApprovalRequestPayload, AgentAskUserPromptPayload, AgentPartialAssistantPayload,
+    AgentToolRejectedPayload, EVT_APPROVAL_REQUEST, EVT_ASK_USER_PROMPT, EVT_PARTIAL_ASSISTANT,
+    EVT_TOOL_REJECTED, emit_stream_delta, emit_stream_done, emit_tool_record,
 };
 use crate::state::AppState;
 
@@ -57,7 +57,8 @@ impl TauriHost {
     /// 同时从 AppState.pending_approvals 移除（per-conv badge 路由用）。
     pub fn resolve_approval(&self, conversation_id: &str, approval_id: &str, allow: bool) -> bool {
         // 先从 AppState pending 集合移除（即使 sender 已超时，也要清 pending 标记）
-        self.app_state.take_pending_approval(conversation_id, approval_id);
+        self.app_state
+            .take_pending_approval(conversation_id, approval_id);
         let tx = self.approvals.lock().unwrap().remove(approval_id);
         match tx {
             Some(tx) => tx.send(allow).is_ok(),
@@ -73,7 +74,8 @@ impl TauriHost {
         ask_user_id: &str,
         response: AskUserResponseResult,
     ) -> bool {
-        self.app_state.take_pending_ask_user(conversation_id, ask_user_id);
+        self.app_state
+            .take_pending_ask_user(conversation_id, ask_user_id);
         let tx = self.ask_users.lock().unwrap().remove(ask_user_id);
         match tx {
             Some(tx) => tx.send(response).is_ok(),
@@ -101,10 +103,19 @@ impl AgentHost for TauriHost {
         );
     }
 
-    fn emit_stream_done(&self, conversation_id: &str, run_id: &str, message_id: &str, reason: &str) {
+    fn emit_stream_done(
+        &self,
+        conversation_id: &str,
+        run_id: &str,
+        message_id: &str,
+        reason: &str,
+    ) {
         tracing::info!(
             "emit stream_done: conv={}, run_id={}, msg_id={}, reason={}",
-            conversation_id, run_id, message_id, reason
+            conversation_id,
+            run_id,
+            message_id,
+            reason
         );
         emit_stream_done(Some(&self.app), conversation_id, run_id, message_id, reason);
     }
@@ -118,7 +129,11 @@ impl AgentHost for TauriHost {
     ) {
         tracing::debug!(
             "emit tool_record: conv={}, run_id={}, tool={}, status={:?}, id={}",
-            conversation_id, run_id, record.name, record.status, record.id
+            conversation_id,
+            run_id,
+            record.name,
+            record.status,
+            record.id
         );
         emit_tool_record(Some(&self.app), conversation_id, run_id, message_id, record);
     }
@@ -131,9 +146,13 @@ impl AgentHost for TauriHost {
         let approval_id = uuid::Uuid::new_v4().to_string();
         let conv_id = ctx.conversation_id.clone();
         let (tx, rx) = oneshot::channel::<bool>();
-        self.approvals.lock().unwrap().insert(approval_id.clone(), tx);
+        self.approvals
+            .lock()
+            .unwrap()
+            .insert(approval_id.clone(), tx);
         // 注册到 AppState pending_approvals（per-conv badge 路由用）
-        self.app_state.insert_pending_approval(&conv_id, &approval_id);
+        self.app_state
+            .insert_pending_approval(&conv_id, &approval_id);
 
         let payload = AgentApprovalRequestPayload {
             conversation_id: conv_id.clone(),
@@ -147,7 +166,10 @@ impl AgentHost for TauriHost {
         };
         tracing::info!(
             "emit approval_request: conv={}, approval_id={}, tool={}, tool_call_id={}",
-            conv_id, approval_id, record.name, ctx.tool_call_id
+            conv_id,
+            approval_id,
+            record.name,
+            ctx.tool_call_id
         );
         if let Err(e) = self.app.emit(EVT_APPROVAL_REQUEST, payload) {
             tracing::warn!("emit approval_request failed: {e}");
@@ -160,17 +182,11 @@ impl AgentHost for TauriHost {
             // 60 秒超时
             match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
                 Ok(Ok(allow)) => {
-                    tracing::info!(
-                        "approval {} resolved: allow={}",
-                        approval_id, allow
-                    );
+                    tracing::info!("approval {} resolved: allow={}", approval_id, allow);
                     allow
                 }
                 Ok(Err(_)) => {
-                    tracing::warn!(
-                        "approval {} sender dropped without response",
-                        approval_id
-                    );
+                    tracing::warn!("approval {} sender dropped without response", approval_id);
                     self.app_state.take_pending_approval(&conv_id, &approval_id);
                     false
                 }
@@ -199,7 +215,8 @@ impl AgentHost for TauriHost {
             .unwrap()
             .insert(ask_user_id.clone(), tx);
         // 注册到 AppState pending_ask_users（per-conv badge 路由用）
-        self.app_state.insert_pending_ask_user(&conv_id, &ask_user_id);
+        self.app_state
+            .insert_pending_ask_user(&conv_id, &ask_user_id);
 
         let event_payload = AgentAskUserPromptPayload {
             conversation_id: conv_id.clone(),
@@ -211,7 +228,9 @@ impl AgentHost for TauriHost {
         };
         tracing::info!(
             "emit ask_user_prompt: conv={}, ask_user_id={}, tool_call_id={}",
-            conv_id, ask_user_id, ctx.tool_call_id
+            conv_id,
+            ask_user_id,
+            ctx.tool_call_id
         );
         if let Err(e) = self.app.emit(EVT_ASK_USER_PROMPT, event_payload) {
             tracing::warn!("emit ask_user_prompt failed: {e}");
@@ -224,10 +243,7 @@ impl AgentHost for TauriHost {
             // 5 分钟超时（Kivio 同款）
             match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
                 Ok(Ok(resp)) => {
-                    tracing::info!(
-                        "ask_user {} resolved: phase={}",
-                        ask_user_id, resp.phase
-                    );
+                    tracing::info!("ask_user {} resolved: phase={}", ask_user_id, resp.phase);
                     resp
                 }
                 _ => {
@@ -252,7 +268,10 @@ impl AgentHost for TauriHost {
     ) {
         tracing::debug!(
             "emit partial_assistant: conv={}, run_id={}, records={}, api_msgs={}",
-            conversation_id, run_id, records.len(), api_messages.len()
+            conversation_id,
+            run_id,
+            records.len(),
+            api_messages.len()
         );
         let payload = AgentPartialAssistantPayload {
             conversation_id: conversation_id.to_string(),
@@ -267,7 +286,8 @@ impl AgentHost for TauriHost {
     }
 
     fn is_generation_active(&self, conversation_id: &str, generation: u64) -> bool {
-        self.app_state.is_generation_active(conversation_id, generation)
+        self.app_state
+            .is_generation_active(conversation_id, generation)
     }
 }
 

@@ -327,12 +327,12 @@ mod tests {
     #[test]
     fn tool_definition_from_mcp_destructive_hint_sensitive() {
         let srv = server("db");
-        let tool = mcp_tool("exec_sql", Some(serde_json::json!({ "destructiveHint": true })));
-        let def = tool_definition_from_mcp(&srv, tool);
-        assert!(
-            def.sensitive,
-            "destructiveHint=true 必须敏感"
+        let tool = mcp_tool(
+            "exec_sql",
+            Some(serde_json::json!({ "destructiveHint": true })),
         );
+        let def = tool_definition_from_mcp(&srv, tool);
+        assert!(def.sensitive, "destructiveHint=true 必须敏感");
     }
 
     #[test]
@@ -360,10 +360,7 @@ mod tests {
     #[test]
     fn tool_definition_from_mcp_readonly_false_sensitive() {
         let srv = server("fs");
-        let tool = mcp_tool(
-            "stat",
-            Some(serde_json::json!({ "readOnlyHint": false })),
-        );
+        let tool = mcp_tool("stat", Some(serde_json::json!({ "readOnlyHint": false })));
         let def = tool_definition_from_mcp(&srv, tool);
         assert!(def.sensitive, "readOnlyHint=false 必须敏感");
     }
@@ -412,10 +409,7 @@ mod tests {
     fn tool_definition_from_mcp_annotation_snake_case_key() {
         // 部分 server 可能用 snake_case 写 annotations（虽然协议规范是 camelCase）
         let srv = server("fs");
-        let tool = mcp_tool(
-            "stat",
-            Some(serde_json::json!({ "read_only_hint": true })),
-        );
+        let tool = mcp_tool("stat", Some(serde_json::json!({ "read_only_hint": true })));
         let def = tool_definition_from_mcp(&srv, tool);
         assert!(!def.sensitive, "snake_case read_only_hint=true 也应识别");
     }
@@ -440,7 +434,13 @@ mod tests {
 
     #[test]
     fn looks_sensitive_tool_skips_readonly_names() {
-        for name in ["read_file", "list_dir", "search", "web_search", "get_status"] {
+        for name in [
+            "read_file",
+            "list_dir",
+            "search",
+            "web_search",
+            "get_status",
+        ] {
             assert!(!looks_sensitive_tool(name), "{name} 不应被识别为敏感");
         }
     }
@@ -523,7 +523,10 @@ mod tests {
             "someField": "value"
         });
         let r = parse_tool_result(v);
-        assert!(!r.content.is_empty(), "无 content 数组时应 fallback 到 compact json");
+        assert!(
+            !r.content.is_empty(),
+            "无 content 数组时应 fallback 到 compact json"
+        );
         assert!(r.content.contains("someField"));
     }
 
@@ -560,7 +563,10 @@ mod tests {
 
     #[test]
     fn parse_mcp_name_invalid_empty_components() {
-        assert!(parse_mcp_name("mcp____tool").is_none(), "空 server_id 应失败");
+        assert!(
+            parse_mcp_name("mcp____tool").is_none(),
+            "空 server_id 应失败"
+        );
         assert!(parse_mcp_name("mcp__fs__").is_none(), "空 tool_name 应失败");
     }
 
@@ -580,7 +586,9 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v, serde_json::json!({ "kind": "connected" }));
 
-        let s = McpServerState::Error { message: "boom".into() };
+        let s = McpServerState::Error {
+            message: "boom".into(),
+        };
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v, serde_json::json!({ "kind": "error", "message": "boom" }));
 

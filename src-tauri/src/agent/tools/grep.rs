@@ -56,11 +56,7 @@ impl Tool for GrepTool {
         })
     }
 
-    fn execute<'a>(
-        &'a self,
-        args: serde_json::Value,
-        _ctx: &'a ToolContext,
-    ) -> ToolFuture<'a> {
+    fn execute<'a>(&'a self, args: serde_json::Value, _ctx: &'a ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let args: GrepArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("search_files: {e}")))?;
@@ -79,7 +75,11 @@ impl Tool for GrepTool {
             let mut matches = Vec::new();
 
             let walker = if base.is_file() {
-                WalkDir::new(&base).min_depth(0).max_depth(0).into_iter().collect::<Vec<_>>()
+                WalkDir::new(&base)
+                    .min_depth(0)
+                    .max_depth(0)
+                    .into_iter()
+                    .collect::<Vec<_>>()
             } else {
                 WalkDir::new(&base).into_iter().collect::<Vec<_>>()
             };
@@ -142,12 +142,14 @@ impl Tool for GrepTool {
             } else {
                 matches
                     .iter()
-                    .map(|m| format!(
-                        "{}:{}: {}",
-                        m["path"].as_str().unwrap_or("?"),
-                        m["line"].as_u64().unwrap_or(0),
-                        m["content"].as_str().unwrap_or("")
-                    ))
+                    .map(|m| {
+                        format!(
+                            "{}:{}: {}",
+                            m["path"].as_str().unwrap_or("?"),
+                            m["line"].as_u64().unwrap_or(0),
+                            m["content"].as_str().unwrap_or("")
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join("\n")
             };

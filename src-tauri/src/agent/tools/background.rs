@@ -51,7 +51,10 @@ impl BackgroundRegistry {
     }
 
     pub fn insert(&self, handle: BackgroundHandle) {
-        self.handles.lock().unwrap().insert(handle.id.clone(), handle);
+        self.handles
+            .lock()
+            .unwrap()
+            .insert(handle.id.clone(), handle);
     }
 
     pub fn remove(&self, id: &str) -> Option<BackgroundHandle> {
@@ -80,7 +83,10 @@ fn registry() -> &'static BackgroundRegistry {
     REGISTRY.get_or_init(BackgroundRegistry::new)
 }
 
-pub async fn spawn_background(command: &str, cwd: &std::path::Path) -> Result<ToolOutput, ToolError> {
+pub async fn spawn_background(
+    command: &str,
+    cwd: &std::path::Path,
+) -> Result<ToolOutput, ToolError> {
     let id = uuid::Uuid::new_v4().to_string();
     let started_at = chrono::Utc::now().timestamp();
 
@@ -202,7 +208,9 @@ impl super::Tool for BashOutputTool {
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                     Ok(ToolOutput {
-                        content: format!("background {id} exited\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"),
+                        content: format!(
+                            "background {id} exited\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+                        ),
                         structured: Some(serde_json::json!({
                             "status": "Exited",
                             "exit_code": status.code(),
@@ -305,7 +313,10 @@ mod tests {
     async fn spawn_then_kill() {
         let cwd = std::env::temp_dir();
         let out = spawn_background("sleep 60", &cwd).await.unwrap();
-        let id = out.structured.unwrap()["background_id"].as_str().unwrap().to_string();
+        let id = out.structured.unwrap()["background_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
 
         let tool = KillBackgroundTool;
         let out = tool
@@ -320,7 +331,10 @@ mod tests {
     async fn bash_output_returns_running_or_exited() {
         let cwd = std::env::temp_dir();
         let out = spawn_background("echo done", &cwd).await.unwrap();
-        let id = out.structured.unwrap()["background_id"].as_str().unwrap().to_string();
+        let id = out.structured.unwrap()["background_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
 
         let tool = BashOutputTool;
         let out = tool
@@ -338,7 +352,10 @@ mod tests {
     async fn unknown_id_errors() {
         let tool = BashOutputTool;
         let res = tool
-            .execute(serde_json::json!({ "background_id": "nonexistent_xyz" }), &ctx())
+            .execute(
+                serde_json::json!({ "background_id": "nonexistent_xyz" }),
+                &ctx(),
+            )
             .await;
         assert!(matches!(res, Err(ToolError::Execution(_))));
     }

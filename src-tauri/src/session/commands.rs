@@ -12,9 +12,7 @@ use crate::session::types::{Conversation, ConversationListItem, SessionMessagesP
 
 /// 创建新会话。生成 `conv_{uuid}`，写 meta.json + index.json。
 #[tauri::command]
-pub async fn create_session(
-    store: State<'_, Arc<SessionStore>>,
-) -> Result<Conversation, String> {
+pub async fn create_session(store: State<'_, Arc<SessionStore>>) -> Result<Conversation, String> {
     store.create_session().await
 }
 
@@ -59,7 +57,9 @@ pub async fn update_session(
     title: Option<String>,
     pinned: Option<bool>,
 ) -> Result<Conversation, String> {
-    store.update_meta(&conversation_id, title.as_deref(), pinned).await
+    store
+        .update_meta(&conversation_id, title.as_deref(), pinned)
+        .await
 }
 
 /// 删除会话（删目录 + 从缓存移除 + 更新 index.json）。

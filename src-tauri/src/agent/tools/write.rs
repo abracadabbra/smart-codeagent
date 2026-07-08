@@ -47,11 +47,7 @@ impl Tool for WriteTool {
         true
     }
 
-    fn execute<'a>(
-        &'a self,
-        args: serde_json::Value,
-        _ctx: &'a ToolContext,
-    ) -> ToolFuture<'a> {
+    fn execute<'a>(&'a self, args: serde_json::Value, _ctx: &'a ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let args: WriteArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("write_file: {e}")))?;
@@ -159,7 +155,9 @@ mod tests {
     #[tokio::test]
     async fn missing_path_arg_errors() {
         let tool = WriteTool;
-        let res = tool.execute(serde_json::json!({ "content": "x" }), &ctx()).await;
+        let res = tool
+            .execute(serde_json::json!({ "content": "x" }), &ctx())
+            .await;
         assert!(matches!(res, Err(ToolError::InvalidArgs(_))));
     }
 }

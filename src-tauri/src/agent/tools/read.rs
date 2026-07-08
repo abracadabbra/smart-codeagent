@@ -47,11 +47,7 @@ impl Tool for ReadTool {
         })
     }
 
-    fn execute<'a>(
-        &'a self,
-        args: serde_json::Value,
-        _ctx: &'a ToolContext,
-    ) -> ToolFuture<'a> {
+    fn execute<'a>(&'a self, args: serde_json::Value, _ctx: &'a ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let args: ReadArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("read_file: {e}")))?;
@@ -59,13 +55,21 @@ impl Tool for ReadTool {
                 .map_err(|e| ToolError::Path(format!("read_file: {e}")))?;
             let max = args.max_bytes.unwrap_or(MAX_READ_BYTES);
 
-            let metadata = std::fs::metadata(&resolved)
-                .map_err(|e| ToolError::Io(std::io::Error::new(e.kind(), format!("{}: {e}", resolved.display()))))?;
+            let metadata = std::fs::metadata(&resolved).map_err(|e| {
+                ToolError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("{}: {e}", resolved.display()),
+                ))
+            })?;
             let total = metadata.len();
 
             // 二进制检测：前 8 KB 包含 NUL → 拒绝
-            let head_bytes = std::fs::read(&resolved)
-                .map_err(|e| ToolError::Io(std::io::Error::new(e.kind(), format!("{}: {e}", resolved.display()))))?;
+            let head_bytes = std::fs::read(&resolved).map_err(|e| {
+                ToolError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("{}: {e}", resolved.display()),
+                ))
+            })?;
             if head_bytes.iter().take(8192).any(|&b| b == 0) {
                 return Err(ToolError::Execution(format!(
                     "read_file: {} appears to be binary (contains NUL bytes)",
@@ -74,7 +78,11 @@ impl Tool for ReadTool {
             }
 
             let truncated = total > max;
-            let content_bytes = if truncated { &head_bytes[..max as usize] } else { &head_bytes[..] };
+            let content_bytes = if truncated {
+                &head_bytes[..max as usize]
+            } else {
+                &head_bytes[..]
+            };
             let content = String::from_utf8_lossy(content_bytes).to_string();
 
             Ok(ToolOutput {
@@ -145,7 +153,10 @@ mod tests {
 
         let tool = ReadTool;
         let out = tool
-            .execute(serde_json::json!({ "path": tmp.to_string_lossy(), "max_bytes": 100 }), &ctx())
+            .execute(
+                serde_json::json!({ "path": tmp.to_string_lossy(), "max_bytes": 100 }),
+                &ctx(),
+            )
             .await
             .unwrap();
         assert_eq!(out.content.len(), 100);
@@ -158,7 +169,10 @@ mod tests {
     async fn missing_file_errors() {
         let tool = ReadTool;
         let res = tool
-            .execute(serde_json::json!({ "path": "/nonexistent_xyz_42.txt" }), &ctx())
+            .execute(
+                serde_json::json!({ "path": "/nonexistent_xyz_42.txt" }),
+                &ctx(),
+            )
             .await;
         assert!(matches!(res, Err(ToolError::Io(_))));
     }
@@ -166,9 +180,7 @@ mod tests {
     #[tokio::test]
     async fn missing_path_arg_errors() {
         let tool = ReadTool;
-        let res = tool
-            .execute(serde_json::json!({}), &ctx())
-            .await;
+        let res = tool.execute(serde_json::json!({}), &ctx()).await;
         assert!(matches!(res, Err(ToolError::InvalidArgs(_))));
     }
 }

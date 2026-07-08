@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::process::Stdio;
 use tokio::process::Command;
 
-use super::{deny_list, Tool, ToolContext, ToolError, ToolFuture, ToolOutput};
+use super::{Tool, ToolContext, ToolError, ToolFuture, ToolOutput, deny_list};
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_TIMEOUT_MS: u64 = 600_000;
@@ -79,11 +79,7 @@ impl Tool for BashTool {
         true
     }
 
-    fn execute<'a>(
-        &'a self,
-        args: serde_json::Value,
-        _ctx: &'a ToolContext,
-    ) -> ToolFuture<'a> {
+    fn execute<'a>(&'a self, args: serde_json::Value, _ctx: &'a ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let args: BashArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("run_command: {e}")))?;
@@ -100,7 +96,8 @@ impl Tool for BashTool {
                 && deny_list::needs_host_python_opt_in(&args.command)
             {
                 return Err(ToolError::Denied(
-                    "host python install blocked; pass allow_host_python_package_install=true".into(),
+                    "host python install blocked; pass allow_host_python_package_install=true"
+                        .into(),
                 ));
             }
 
@@ -117,7 +114,10 @@ impl Tool for BashTool {
             }
 
             // 5. 前台执行带超时
-            let timeout = args.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS);
+            let timeout = args
+                .timeout_ms
+                .unwrap_or(DEFAULT_TIMEOUT_MS)
+                .min(MAX_TIMEOUT_MS);
             let started = std::time::Instant::now();
 
             let future = async {
@@ -130,18 +130,18 @@ impl Tool for BashTool {
                     .stderr(Stdio::piped())
                     .kill_on_drop(true)
                     .spawn()
-                    .map_err(|e| {
-                        ToolError::Execution(format!("spawn failed: {e}"))
-                    })?;
+                    .map_err(|e| ToolError::Execution(format!("spawn failed: {e}")))?;
 
-                let output = child.wait_with_output().await.map_err(|e| {
-                    ToolError::Execution(format!("wait failed: {e}"))
-                })?;
+                let output = child
+                    .wait_with_output()
+                    .await
+                    .map_err(|e| ToolError::Execution(format!("wait failed: {e}")))?;
 
                 Ok::<_, ToolError>(output)
             };
 
-            let result = tokio::time::timeout(std::time::Duration::from_millis(timeout), future).await;
+            let result =
+                tokio::time::timeout(std::time::Duration::from_millis(timeout), future).await;
             let duration_ms = started.elapsed().as_millis() as u64;
 
             match result {
@@ -224,7 +224,10 @@ mod tests {
     async fn blocks_pip_install_without_opt_in() {
         let tool = BashTool;
         let res = tool
-            .execute(serde_json::json!({ "command": "pip install requests" }), &ctx())
+            .execute(
+                serde_json::json!({ "command": "pip install requests" }),
+                &ctx(),
+            )
             .await;
         assert!(matches!(res, Err(ToolError::Denied(_))));
     }

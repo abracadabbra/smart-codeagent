@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 use tauri::Manager;
 use tokio::sync::Mutex;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::agent::host_impl::TauriHost;
 use crate::ipc::commands::{
     answer_ask_user, approve_tool, cancel_run, force_reset_session, get_session_state,
-    get_settings, list_active_sessions, list_mcp_server_states, list_mcp_servers,
-    reload_settings, save_settings, send_message, test_mcp_server,
+    get_settings, list_active_sessions, list_mcp_server_states, list_mcp_servers, reload_settings,
+    save_settings, send_message, test_mcp_server,
 };
 use crate::mcp::McpManager;
 use crate::session::commands::{
@@ -57,10 +57,7 @@ pub fn run() {
             // 共享 TauriHost：approval / ask_user / cancel 命令通过 try_state 取它，
             // run_agent_loop 也用同一个实例（否则 oneshot sender 永远等不到 command 解析）。
             // Phase 3.2：TauriHost 持有 AppState 的 Arc 引用，用于 per-conv pending 路由。
-            let host: Arc<TauriHost> = Arc::new(TauriHost::new(
-                handle.clone(),
-                app_state.clone(),
-            ));
+            let host: Arc<TauriHost> = Arc::new(TauriHost::new(handle.clone(), app_state.clone()));
             app.manage(host);
 
             // Phase 3.2: SessionStore（内存缓存 + 写穿磁盘）—— 全局单例

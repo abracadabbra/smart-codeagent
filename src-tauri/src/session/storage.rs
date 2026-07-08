@@ -33,8 +33,7 @@ pub(crate) fn atomic_write(path: &Path, content: &str, label: &str) -> Result<()
 
     // 父目录不存在则创建
     if !parent.exists() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("write {label}: create parent dir: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| format!("write {label}: create parent dir: {e}"))?;
     }
 
     let file_name = path
@@ -86,9 +85,7 @@ pub(crate) fn atomic_write(path: &Path, content: &str, label: &str) -> Result<()
         }
 
         // 线性退避：20ms / 40ms / 60ms
-        std::thread::sleep(std::time::Duration::from_millis(
-            20 * (attempt as u64 + 1),
-        ));
+        std::thread::sleep(std::time::Duration::from_millis(20 * (attempt as u64 + 1)));
     }
 
     Err(format!(

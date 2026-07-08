@@ -26,7 +26,9 @@
 //! - `index` 字段区分并行 tool_calls（0, 1, 2...）
 
 use crate::config::AnthropicConfig;
-use crate::providers::{MessagesRequest, Provider, ProviderError, ProviderResult, StreamChunk, TokenStream};
+use crate::providers::{
+    MessagesRequest, Provider, ProviderError, ProviderResult, StreamChunk, TokenStream,
+};
 use async_stream::try_stream;
 use futures::stream::StreamExt;
 use reqwest::Client;
@@ -148,17 +150,19 @@ impl Provider for AnthropicClient {
         }
         for m in &req.messages {
             // 过滤 content 为空字符串的消息（SenseNova 会报 input length 错误）
-            if m.role == "user" || m.role == "tool" {
-                if m.content.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
-                    tracing::warn!("skip empty {} message", m.role);
-                    continue;
-                }
+            if (m.role == "user" || m.role == "tool")
+                && m.content
+                    .as_deref()
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true)
+            {
+                tracing::warn!("skip empty {} message", m.role);
+                continue;
             }
             // Message 已经是 OpenAI 格式（serde 序列化），但 content 是 Option<String>
             // OpenAI 要求 content 至少是 null 或字符串，serde 会把 None 序列化成 null
-            let mut msg = serde_json::to_value(m).unwrap_or_else(|_| {
-                serde_json::json!({"role": m.role, "content": ""})
-            });
+            let mut msg = serde_json::to_value(m)
+                .unwrap_or_else(|_| serde_json::json!({"role": m.role, "content": ""}));
             // 如果 content 是 None 且有 tool_calls，确保 content 字段存在为 null
             if m.content.is_none() {
                 msg["content"] = serde_json::Value::Null;
@@ -207,11 +211,21 @@ impl Provider for AnthropicClient {
         let tools_count = tools_api.len();
 
         // 计算各部分长度，帮助定位 "Range of input length should be [1, 1000000]"
-        let messages_json_len = serde_json::to_string(&messages_api).map(|s| s.len()).unwrap_or(0);
-        let tools_json_len = serde_json::to_string(&tools_api).map(|s| s.len()).unwrap_or(0);
+        let messages_json_len = serde_json::to_string(&messages_api)
+            .map(|s| s.len())
+            .unwrap_or(0);
+        let tools_json_len = serde_json::to_string(&tools_api)
+            .map(|s| s.len())
+            .unwrap_or(0);
         tracing::info!(
             "POST {} | model={} | messages={} | tools={} | system_len={} | messages_json_len={} | tools_json_len={}",
-            url, req.model, req.messages.len(), tools_count, system_len, messages_json_len, tools_json_len
+            url,
+            req.model,
+            req.messages.len(),
+            tools_count,
+            system_len,
+            messages_json_len,
+            tools_json_len
         );
 
         let mut body = serde_json::json!({
@@ -243,7 +257,11 @@ impl Provider for AnthropicClient {
                 "API error: status={} | body_len={} | body_preview={}",
                 status,
                 body.len(),
-                if body.len() > 300 { &body[..300] } else { &body }
+                if body.len() > 300 {
+                    &body[..300]
+                } else {
+                    &body
+                }
             );
             return Err(ProviderError::Api {
                 status: status.as_u16(),
@@ -326,10 +344,7 @@ fn parse_event(event_text: &str, tool_started: &mut HashMap<u32, bool>) -> Vec<S
             // 处理 finish_reason —— SenseNova 流式响应里很多块带空字符串 `""`，
             // 只有真正的结束信号才是非空字符串（"stop"/"tool_calls"/"length"/"content_filter"）。
             // 空字符串当成 None 处理，避免提前触发 Done。
-            let reason_opt = choice
-                .finish_reason
-                .as_deref()
-                .filter(|s| !s.is_empty());
+            let reason_opt = choice.finish_reason.as_deref().filter(|s| !s.is_empty());
 
             if let Some(reason) = reason_opt {
                 match reason {
@@ -452,7 +467,8 @@ mod tests {
 
     #[test]
     fn parses_finish_reason_tool_calls() {
-        let event = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n";
+        let event =
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n";
         let mut started = HashMap::new();
         let chunks = parse_event(event, &mut started);
         assert_eq!(chunks.len(), 2);
@@ -467,7 +483,8 @@ mod tests {
 
     #[test]
     fn parses_finish_reason_stop() {
-        let event = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n";
+        let event =
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n";
         let mut started = HashMap::new();
         let chunks = parse_event(event, &mut started);
         assert_eq!(chunks.len(), 1);

@@ -1,0 +1,293 @@
+name: Release
+
+# 触发条件：推送 v* 格式的 tag 时构建并发布 Release。
+# 也可在 GitHub Actions 页面手动触发（用于测试）。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（如 0.2.0，不带 v 前缀）"
+        required: true
+        default: "0.2.0"
+
+jobs:
+  # ───────────────────────────────────────────────────────────
+  # Job 1: 创建 Release（只跑一次，后续构建依赖它的 upload_url）
+  # ───────────────────────────────────────────────────────────
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: 计算版本号
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # push tag 场景：从 tag 名去掉 v 前缀
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 创建 GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## Smart CodeAgent v${{ steps.version.outputs.version }}
+
+            下载对应平台的安装包即可使用。
+            macOS 用户下载 `.dmg`，Windows 用户下载 `.msi`，Linux 用户下载 `.AppImage`。
+
+            > 安装后应用会自动检查更新，后续版本可通过设置面板一键升级。
+
+  # ───────────────────────────────────────────────────────────
+  # Job 2: 多平台构建（macOS / Windows / Linux 并行）
+  # ───────────────────────────────────────────────────────────
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            os: macos-latest
+            target: aarch64-apple-darwin
+            label: macOS (Apple Silicon)
+          - platform: macos
+            os: macos-13
+            target: x86_64-apple-darwin
+            label: macOS (Intel)
+          - platform: windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: Windows
+          - platform: linux
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: Linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装 Rust 稳定工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust 缓存
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      # Linux 平台需要额外安装 Tauri 的系统依赖
+      - name: 安装 Linux 系统依赖
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev
+
+      - name: 安装 Tauri CLI
+        run: npm install -D @tauri-apps/cli@^2
+
+      # 设置签名环境变量（从 GitHub Secrets 读取）
+      # TAURI_SIGNING_PRIVATE_KEY：私钥文件内容
+      # TAURI_SIGNING_PRIVATE_KEY_PASSWORD：私钥密码（无密码则为空）
+      - name: 设置 Tauri 签名密钥
+        shell: bash
+        run: |
+          echo "TAURI_SIGNING_PRIVATE_KEY=${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" >> $GITHUB_ENV
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> $GITHUB_ENV
+
+      # 构建并签名。updater 产物会输出到 target/release/bundle/ 下。
+      - name: 构建 Tauri 应用
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v${{ needs.create-release.outputs.version }}
+          releaseName: v${{ needs.create-release.outputs.version }}
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      # 上传 updater 产物（.tar.gz.sig / .zip.sig）作为 Release Asset。
+      # 这些签名文件是 Tauri updater 验证安装包完整性的关键。
+      - name: 上传 macOS updater 产物
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-macos-${{ matrix.target }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.tar.gz.sig
+          if-no-files-found: warn
+
+      - name: 上传 Windows updater 产物
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-windows
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi.zip
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi.zip.sig
+          if-no-files-found: warn
+
+      - name: 上传 Linux updater 产物
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-linux
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage.tar.gz.sig
+          if-no-files-found: warn
+
+  # ───────────────────────────────────────────────────────────
+  # Job 3: 生成 latest.json（供 Tauri updater 检查更新）
+  # ───────────────────────────────────────────────────────────
+  generate-latest-json:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载全部构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 列出产物结构（调试用）
+        run: find artifacts -type f | sort
+
+      - name: 生成 latest.json
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          # 收集各平台签名文件路径
+          MACOS_ARM_SIG=$(find artifacts -name "*.app.tar.gz.sig" | grep "aarch64" | head -1 || true)
+          MACOS_INTEL_SIG=$(find artifacts -name "*.app.tar.gz.sig" | grep "x86_64-apple-darwin" | head -1 || true)
+          WINDOWS_SIG=$(find artifacts -name "*.msi.zip.sig" | head -1 || true)
+          LINUX_SIG=$(find artifacts -name "*.AppImage.tar.gz.sig" | head -1 || true)
+
+          MACOS_ARM_TAR=$(find artifacts -name "*.app.tar.gz" | grep "aarch64" | head -1 || true)
+          MACOS_INTEL_TAR=$(find artifacts -name "*.app.tar.gz" | grep "x86_64-apple-darwin" | head -1 || true)
+          WINDOWS_ZIP=$(find artifacts -name "*.msi.zip" | head -1 || true)
+          LINUX_TAR=$(find artifacts -name "*.AppImage.tar.gz" | head -1 || true)
+
+          # 读取签名内容（base64 编码的 minisign 签名）
+          read_sig() {
+            if [ -f "$1" ]; then
+              cat "$1" | tr -d '\n'
+            else
+              echo ""
+            fi
+          }
+
+          # 构造下载 URL（GitHub Release 的 asset 下载链接）
+          REPO="abracadabbra/smart-codeagent"
+          TAG="v${VERSION}"
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+
+          # macOS aarch64
+          MACOS_ARM_SIG_CONTENT=$(read_sig "$MACOS_ARM_SIG")
+          MACOS_ARM_FILENAME=$(basename "$MACOS_ARM_TAR" 2>/dev/null || echo "")
+
+          # macOS x86_64
+          MACOS_INTEL_SIG_CONTENT=$(read_sig "$MACOS_INTEL_SIG")
+          MACOS_INTEL_FILENAME=$(basename "$MACOS_INTEL_TAR" 2>/dev/null || echo "")
+
+          # Windows
+          WINDOWS_SIG_CONTENT=$(read_sig "$WINDOWS_SIG")
+          WINDOWS_FILENAME=$(basename "$WINDOWS_ZIP" 2>/dev/null || echo "")
+
+          # Linux
+          LINUX_SIG_CONTENT=$(read_sig "$LINUX_SIG")
+          LINUX_FILENAME=$(basename "$LINUX_TAR" 2>/dev/null || echo "")
+
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # 用 jq 生成 JSON，确保格式正确
+          jq -n \
+            --arg version "$VERSION" \
+            --arg pubDate "$PUB_DATE" \
+            --arg notes "Smart CodeAgent v${VERSION}" \
+            --arg macArmUrl "${BASE_URL}/${MACOS_ARM_FILENAME}" \
+            --arg macArmSig "$MACOS_ARM_SIG_CONTENT" \
+            --arg macIntelUrl "${BASE_URL}/${MACOS_INTEL_FILENAME}" \
+            --arg macIntelSig "$MACOS_INTEL_SIG_CONTENT" \
+            --arg windowsUrl "${BASE_URL}/${WINDOWS_FILENAME}" \
+            --arg windowsSig "$WINDOWS_SIG_CONTENT" \
+            --arg linuxUrl "${BASE_URL}/${LINUX_FILENAME}" \
+            --arg linuxSig "$LINUX_SIG_CONTENT" \
+            '{
+              version: $version,
+              notes: $notes,
+              pubDate: $pubDate,
+              platforms: {
+                "darwin-aarch64": {
+                  signature: $macArmSig,
+                  url: $macArmUrl
+                },
+                "darwin-x86_64": {
+                  signature: $macIntelSig,
+                  url: $macIntelUrl
+                },
+                "windows-x86_64": {
+                  signature: $windowsSig,
+                  url: $windowsUrl
+                },
+                "linux-x86_64": {
+                  signature: $linuxSig,
+                  url: $linuxUrl
+                }
+              }
+            }' > latest.json
+
+          echo "=== 生成的 latest.json ==="
+          cat latest.json
+
+      - name: 上传 latest.json 到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.create-release.outputs.version }}
+          files: latest.json
+
+      - name: 上传 latest.json 作为 artifact（备查）
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-json
+          path: latest.json

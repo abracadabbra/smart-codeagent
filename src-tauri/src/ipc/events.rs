@@ -12,8 +12,8 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::agent::tools::{AskUserPromptPayload, ToolCallRecord};
 use crate::agent::AgentState;
+use crate::agent::tools::{AskUserPromptPayload, ToolCallRecord};
 use crate::session::types::Conversation;
 
 // ============================================================================

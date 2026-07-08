@@ -12,12 +12,12 @@
 use std::sync::Arc;
 
 use crate::agent::host::AgentHost;
+use crate::agent::host_impl::emit_tool_rejected;
 use crate::agent::tools::{
     ChatToolDefinition, ToolCallRecord, ToolCallStatus, ToolContext, ToolOutput, ToolRegistry,
 };
 use crate::agent::types::ToolUseBlock;
-use crate::agent::host_impl::emit_tool_rejected;
-use crate::mcp::{parse_mcp_name, McpManager};
+use crate::mcp::{McpManager, parse_mcp_name};
 use serde::Serialize;
 use tauri::AppHandle;
 use tracing::{debug, info, warn};
@@ -78,7 +78,11 @@ pub async fn dispatch_round(
         results.push(result);
     }
 
-    info!("dispatch_round end: round={}, results={}", ctx.round, results.len());
+    info!(
+        "dispatch_round end: round={}, results={}",
+        ctx.round,
+        results.len()
+    );
     results
 }
 
@@ -149,7 +153,10 @@ async fn dispatch_single(
 
         let mut sub_ctx = ctx.clone();
         sub_ctx.tool_call_id = tool_call_id.clone();
-        info!("requesting approval for tool {} (id={})", tool_name, tool_call_id);
+        info!(
+            "requesting approval for tool {} (id={})",
+            tool_name, tool_call_id
+        );
         let approval_started = std::time::Instant::now();
         let approved = host.request_tool_approval(&sub_ctx, &record).await;
         info!(
@@ -233,10 +240,7 @@ async fn dispatch_single(
             }
         }
         Err(e) => {
-            warn!(
-                "tool {} failed: error={:?}",
-                tool_name_for_record, e
-            );
+            warn!("tool {} failed: error={:?}", tool_name_for_record, e);
             // 区分：Denied 是 permission 类，Error 是执行失败类
             let (kind_label, msg) = match &e {
                 crate::agent::tools::ToolError::Denied(reason) => {
@@ -484,7 +488,15 @@ pub fn emit_rejected_direct(
     tool_name: &str,
     reason: &str,
 ) {
-    emit_tool_rejected(app, conversation_id, run_id, message_id, tool_call_id, tool_name, reason);
+    emit_tool_rejected(
+        app,
+        conversation_id,
+        run_id,
+        message_id,
+        tool_call_id,
+        tool_name,
+        reason,
+    );
 }
 
 // 反引用 ToolOutput 防止 unused warning

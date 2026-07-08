@@ -21,8 +21,8 @@ use crate::settings::{ChatMcpServer, Settings};
 
 use super::client::{McpEventSink, StdioMcpClient};
 use super::http_client::HttpMcpClient;
-use super::types::{McpServerState, McpServerStatePayload, McpTool, McpToolCallResult};
 use super::types::tool_definition_from_mcp;
+use super::types::{McpServerState, McpServerStatePayload, McpTool, McpToolCallResult};
 use crate::agent::tools::ChatToolDefinition;
 
 /// 默认 tool 超时（30s）。生产路径可由调用方覆盖。
@@ -370,7 +370,8 @@ while True:
         let mut path = std::env::temp_dir();
         path.push(format!("sca-mgr-fake-{}.py", uuid::Uuid::new_v4()));
         let mut file = std::fs::File::create(&path).expect("create fake server");
-        file.write_all(script.as_bytes()).expect("write fake server");
+        file.write_all(script.as_bytes())
+            .expect("write fake server");
         path
     }
 

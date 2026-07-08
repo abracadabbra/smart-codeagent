@@ -1,16 +1,16 @@
 //! 工具系统公共类型 + 子模块声明。
 
-pub mod path;
-pub mod deny_list;
-pub mod read;
-pub mod write;
-pub mod edit;
-pub mod bash;
+pub mod ask_user;
 pub mod background;
+pub mod bash;
+pub mod deny_list;
+pub mod edit;
 pub mod glob;
 pub mod grep;
 pub mod ls;
-pub mod ask_user;
+pub mod path;
+pub mod read;
+pub mod write;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -98,11 +98,7 @@ pub trait Tool: Send + Sync {
     }
 
     /// 实际执行。`ctx` 由 loop 注入，`args` 是 LLM 输出的 JSON。
-    fn execute<'a>(
-        &'a self,
-        args: serde_json::Value,
-        ctx: &'a ToolContext,
-    ) -> ToolFuture<'a>;
+    fn execute<'a>(&'a self, args: serde_json::Value, ctx: &'a ToolContext) -> ToolFuture<'a>;
 }
 
 /// LLM 看到的工具定义（Anthropic `tools` 字段的 wire format）。
@@ -312,11 +308,7 @@ mod tests {
                 "required": ["msg"],
             })
         }
-        fn execute(
-            &self,
-            args: serde_json::Value,
-            _ctx: &ToolContext,
-        ) -> ToolFuture<'_> {
+        fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolFuture<'_> {
             Box::pin(async move {
                 let msg = args
                     .get("msg")
@@ -347,11 +339,7 @@ mod tests {
         fn is_destructive(&self) -> bool {
             true
         }
-        fn execute(
-            &self,
-            _args: serde_json::Value,
-            _ctx: &ToolContext,
-        ) -> ToolFuture<'_> {
+        fn execute(&self, _args: serde_json::Value, _ctx: &ToolContext) -> ToolFuture<'_> {
             Box::pin(async move {
                 Ok(ToolOutput {
                     content: "ok".into(),
@@ -437,7 +425,10 @@ mod tests {
             }],
         };
         let json = serde_json::to_value(&payload).unwrap();
-        assert_eq!(json["questions"][0]["options"][1]["description"], "TypeScript native");
+        assert_eq!(
+            json["questions"][0]["options"][1]["description"],
+            "TypeScript native"
+        );
         // round trip
         let s = serde_json::to_string(&payload).unwrap();
         let back: AskUserPromptPayload = serde_json::from_str(&s).unwrap();

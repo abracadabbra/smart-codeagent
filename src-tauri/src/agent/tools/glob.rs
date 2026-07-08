@@ -45,11 +45,7 @@ impl Tool for GlobTool {
         })
     }
 
-    fn execute<'a>(
-        &'a self,
-        args: serde_json::Value,
-        _ctx: &'a ToolContext,
-    ) -> ToolFuture<'a> {
+    fn execute<'a>(&'a self, args: serde_json::Value, _ctx: &'a ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let args: GlobArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("glob_files: {e}")))?;
@@ -68,7 +64,11 @@ impl Tool for GlobTool {
                     .filter_map(|p| p.ok())
                     .map(|p| p.to_string_lossy().to_string())
                     .collect(),
-                Err(e) => return Err(ToolError::InvalidArgs(format!("glob_files: bad pattern: {e}"))),
+                Err(e) => {
+                    return Err(ToolError::InvalidArgs(format!(
+                        "glob_files: bad pattern: {e}"
+                    )));
+                }
             };
 
             let total = paths.len();
@@ -135,7 +135,10 @@ mod tests {
     async fn no_match_returns_empty() {
         let tool = GlobTool;
         let out = tool
-            .execute(serde_json::json!({ "pattern": "/nonexistent_xyz_42/*.nope" }), &ctx())
+            .execute(
+                serde_json::json!({ "pattern": "/nonexistent_xyz_42/*.nope" }),
+                &ctx(),
+            )
             .await
             .unwrap();
         assert_eq!(out.structured.unwrap()["total"], 0);

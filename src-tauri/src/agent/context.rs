@@ -74,12 +74,10 @@ pub fn trim_messages(messages: &[Message], max_tokens: u32) -> Vec<Message> {
     let mut dropped_tool_call_ids = std::collections::HashSet::new();
     let mut drop_indices = std::collections::HashSet::new();
 
-    for i in start_idx..messages.len() {
+    for (i, msg) in messages.iter().enumerate().skip(start_idx) {
         if to_drop == 0 {
             break;
         }
-
-        let msg = &messages[i];
 
         // 如果是 tool 结果消息，检查其对应的 assistant tool_call 是否已被丢弃。
         if msg.role == "tool" {
@@ -180,15 +178,21 @@ mod tests {
         let trimmed = trim_messages(&messages, 30);
         assert_eq!(trimmed[0].role, "system");
         assert!(
-            trimmed.iter().any(|m| m.content.as_deref() == Some("recent question")),
+            trimmed
+                .iter()
+                .any(|m| m.content.as_deref() == Some("recent question")),
             "应保留最近用户消息"
         );
         assert!(
-            trimmed.iter().any(|m| m.content.as_deref() == Some("recent answer")),
+            trimmed
+                .iter()
+                .any(|m| m.content.as_deref() == Some("recent answer")),
             "应保留最近 assistant 回复"
         );
         assert!(
-            !trimmed.iter().any(|m| m.content.as_deref() == Some("old message 1")),
+            !trimmed
+                .iter()
+                .any(|m| m.content.as_deref() == Some("old message 1")),
             "应丢弃最旧用户消息"
         );
     }
@@ -209,11 +213,15 @@ mod tests {
 
         assert_eq!(trimmed[0].role, "system");
         assert!(
-            !trimmed.iter().any(|m| m.tool_call_id.as_deref() == Some("call_1")),
+            !trimmed
+                .iter()
+                .any(|m| m.tool_call_id.as_deref() == Some("call_1")),
             "应同步丢弃对应 tool 结果"
         );
         assert!(
-            trimmed.iter().any(|m| m.content.as_deref() == Some("next question")),
+            trimmed
+                .iter()
+                .any(|m| m.content.as_deref() == Some("next question")),
             "应保留最近用户消息"
         );
     }

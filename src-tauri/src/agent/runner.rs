@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::agent::host::AgentHost;
 use crate::agent::recovery::{
-    error_message_for_user, RetryPolicy, TrimAndRetryContext, retry_with_backoff_hooked,
+    RetryPolicy, TrimAndRetryContext, error_message_for_user, retry_with_backoff_hooked,
 };
 use crate::agent::tools::{ToolCallRecord, ToolCallStatus, ToolContext, ToolRegistry};
 use crate::agent::types::{AgentRunConfig, AgentRunResult, RoundResponse, ToolUseBlock};
@@ -62,17 +62,15 @@ impl SessionRunner {
     }
 
     /// 追加 user 消息（写 SessionStore + 写内存 history）。
-    pub async fn push_user(
-        &mut self,
-        store: &SessionStore,
-        text: &str,
-    ) -> Result<(), String> {
+    pub async fn push_user(&mut self, store: &SessionStore, text: &str) -> Result<(), String> {
         let msg = ChatMessage::user(
             format!("msg_{}", uuid::Uuid::new_v4()),
             text,
             chrono::Utc::now().timestamp_millis(),
         );
-        store.append_message(&self.conversation_id, msg.clone()).await?;
+        store
+            .append_message(&self.conversation_id, msg.clone())
+            .await?;
         self.history.push(msg);
         Ok(())
     }
@@ -181,7 +179,9 @@ pub async fn run_agent_loop(
     let anthropic_cfg = match AnthropicConfig::from_provider(&settings.provider) {
         Ok(cfg) => cfg,
         Err(e) => {
-            let msg = format!("配置错误: {e}. 请在设置面板中配置 LLM Provider（API Key / Base URL / Model）。");
+            let msg = format!(
+                "配置错误: {e}. 请在设置面板中配置 LLM Provider（API Key / Base URL / Model）。"
+            );
             emit_error(app.as_ref(), &conv_id, &assistant_id, &msg);
             app_state.set_session_state(&conv_id, AgentState::Idle);
             emit_status(app.as_ref(), &conv_id, AgentState::Idle);
@@ -221,15 +221,7 @@ pub async fn run_agent_loop(
 
         let snapshot = session.to_llm_messages();
         let mut stream = match request_stream_with_recovery(
-            &provider,
-            &config,
-            &snapshot,
-            &tool_defs,
-            &app,
-            app_state,
-            &conv_id,
-            generation,
-            round,
+            &provider, &config, &snapshot, &tool_defs, &app, app_state, &conv_id, generation, round,
         )
         .await
         {
@@ -326,9 +318,7 @@ pub async fn run_agent_loop(
                 tool_records: None,
                 created_at: chrono::Utc::now().timestamp_millis(),
             };
-            session
-                .push_assistant(session_store, assistant_msg)
-                .await?;
+            session.push_assistant(session_store, assistant_msg).await?;
 
             for tr in &tool_results {
                 let body = match &tr.kind {
@@ -356,7 +346,13 @@ pub async fn run_agent_loop(
                 &round_resp.tool_uses,
                 &tool_results,
             );
-            host.persist_partial_assistant(&conv_id, &run_id, &assistant_id, &all_tool_records, &api_msgs);
+            host.persist_partial_assistant(
+                &conv_id,
+                &run_id,
+                &assistant_id,
+                &all_tool_records,
+                &api_msgs,
+            );
 
             if round_resp.text.is_empty() && round_resp.tool_uses.is_empty() {
                 warn!("round {round}: empty response (no text, no tool_use), breaking");
@@ -481,9 +477,7 @@ async fn request_stream_with_recovery(
                 if recoverable.should_trim() && trim_ctx.trim() {
                     app_state.set_session_state(conv_id, AgentState::TrimContext);
                     emit_status(app.as_ref(), conv_id, AgentState::TrimContext);
-                    warn!(
-                        "round {round}: trimming context and retrying after error: {e}"
-                    );
+                    warn!("round {round}: trimming context and retrying after error: {e}");
                     continue;
                 }
 
@@ -523,7 +517,11 @@ async fn consume_stream(
                     debug!(
                         "SSE text delta: len={}, content={:?}",
                         delta.len(),
-                        if delta.len() > 80 { &delta[..80] } else { &delta }
+                        if delta.len() > 80 {
+                            &delta[..80]
+                        } else {
+                            &delta
+                        }
                     );
                     text.push_str(&delta);
                     host.emit_stream_delta(conversation_id, run_id, message_id, &delta, None);
@@ -757,7 +755,8 @@ mod tests {
             ChatMessage::user("msg_1", "hello", 1000),
             ChatMessage::assistant_text("msg_2", "hi", 2000),
         ];
-        let runner = SessionRunner::new("conv_x".into(), "run_1".into(), "msg_2".into(), history, 1);
+        let runner =
+            SessionRunner::new("conv_x".into(), "run_1".into(), "msg_2".into(), history, 1);
 
         let llm_msgs = runner.to_llm_messages();
         assert_eq!(llm_msgs.len(), 2);
@@ -788,7 +787,8 @@ mod tests {
             tool_records: None,
             created_at: 1000,
         }];
-        let runner = SessionRunner::new("conv_x".into(), "run_1".into(), "msg_1".into(), history, 1);
+        let runner =
+            SessionRunner::new("conv_x".into(), "run_1".into(), "msg_1".into(), history, 1);
 
         let llm_msgs = runner.to_llm_messages();
         assert_eq!(llm_msgs.len(), 1);
@@ -808,7 +808,8 @@ mod tests {
             tool_records: None,
             created_at: 1000,
         }];
-        let runner = SessionRunner::new("conv_x".into(), "run_1".into(), "msg_1".into(), history, 1);
+        let runner =
+            SessionRunner::new("conv_x".into(), "run_1".into(), "msg_1".into(), history, 1);
 
         let llm_msgs = runner.to_llm_messages();
         assert_eq!(llm_msgs.len(), 1);

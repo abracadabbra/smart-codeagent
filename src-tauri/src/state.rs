@@ -132,9 +132,7 @@ impl AppState {
             .chat_active_generations
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        gens.entry(conv_id.to_string())
-            .or_default()
-            .insert(gen_val);
+        gens.entry(conv_id.to_string()).or_default().insert(gen_val);
         gen_val
     }
 
@@ -221,10 +219,20 @@ impl AppState {
     ///
     /// 用于解除"僵尸"状态（前端卡在 Running 但后端 run 已不存在）。
     pub fn force_reset_session(&self, conv_id: &str) {
-        if let Some(gens) = self.chat_active_generations.lock().unwrap_or_else(|e| e.into_inner()).get_mut(conv_id) {
+        if let Some(gens) = self
+            .chat_active_generations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(conv_id)
+        {
             gens.clear();
         }
-        if let Some(runs) = self.chat_active_replies.lock().unwrap_or_else(|e| e.into_inner()).get_mut(conv_id) {
+        if let Some(runs) = self
+            .chat_active_replies
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(conv_id)
+        {
             runs.clear();
         }
         self.session_states
@@ -257,7 +265,7 @@ impl AppState {
             let mut pending = self
                 .pending_approvals
                 .lock()
-            .unwrap_or_else(|e| e.into_inner());
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(set) = pending.get_mut(conv_id) {
                 existed = set.remove(approval_id);
                 should_remove = set.is_empty();
@@ -299,7 +307,7 @@ impl AppState {
             let mut pending = self
                 .pending_ask_users
                 .lock()
-            .unwrap_or_else(|e| e.into_inner());
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(set) = pending.get_mut(conv_id) {
                 existed = set.remove(ask_user_id);
                 should_remove = set.is_empty();

@@ -50,11 +50,7 @@ impl Tool for EditTool {
         true
     }
 
-    fn execute<'a>(
-        &'a self,
-        args: serde_json::Value,
-        _ctx: &'a ToolContext,
-    ) -> ToolFuture<'a> {
+    fn execute<'a>(&'a self, args: serde_json::Value, _ctx: &'a ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let args: EditArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("edit_file: {e}")))?;
@@ -139,7 +135,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.structured.unwrap()["replacements"], 1);
-        assert_eq!(std::fs::read_to_string(&tmp).unwrap(), "hi world\nbye world");
+        assert_eq!(
+            std::fs::read_to_string(&tmp).unwrap(),
+            "hi world\nbye world"
+        );
 
         std::fs::remove_file(&tmp).ok();
     }

@@ -39,11 +39,7 @@ impl Tool for LsTool {
         })
     }
 
-    fn execute<'a>(
-        &'a self,
-        args: serde_json::Value,
-        _ctx: &'a ToolContext,
-    ) -> ToolFuture<'a> {
+    fn execute<'a>(&'a self, args: serde_json::Value, _ctx: &'a ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let args: LsArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("list_dir: {e}")))?;
@@ -65,7 +61,7 @@ impl Tool for LsTool {
                         return Err(ToolError::Io(std::io::Error::other(format!(
                             "walk {}: {e}",
                             resolved.display()
-                        ))))
+                        ))));
                     }
                 };
                 let meta = match entry.metadata() {
@@ -83,7 +79,12 @@ impl Tool for LsTool {
             entries.sort_by(|a, b| {
                 let ak = a["kind"].as_str().unwrap_or("");
                 let bk = b["kind"].as_str().unwrap_or("");
-                ak.cmp(bk).then(a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")))
+                ak.cmp(bk).then(
+                    a["name"]
+                        .as_str()
+                        .unwrap_or("")
+                        .cmp(b["name"].as_str().unwrap_or("")),
+                )
             });
 
             let total = entries.len();
@@ -102,7 +103,11 @@ impl Tool for LsTool {
                 .join("\n");
 
             Ok(ToolOutput {
-                content: if text.is_empty() { "(empty directory)".to_string() } else { text },
+                content: if text.is_empty() {
+                    "(empty directory)".to_string()
+                } else {
+                    text
+                },
                 structured: Some(serde_json::json!({
                     "entries": entries,
                     "total": total,

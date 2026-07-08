@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::{
-    AskUserPromptPayload, AskUserQuestion, AskUserResponseResult, Tool, ToolContext,
-    ToolError, ToolFuture,
+    AskUserPromptPayload, AskUserQuestion, AskUserResponseResult, Tool, ToolContext, ToolError,
+    ToolFuture,
 };
 
 pub struct AskUserTool;
@@ -74,11 +74,7 @@ impl Tool for AskUserTool {
         true
     }
 
-    fn execute<'a>(
-        &'a self,
-        args: serde_json::Value,
-        _ctx: &'a ToolContext,
-    ) -> ToolFuture<'a> {
+    fn execute<'a>(&'a self, args: serde_json::Value, _ctx: &'a ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let args: AskUserArgs = serde_json::from_value(args)
                 .map_err(|e| ToolError::InvalidArgs(format!("ask_user: {e}")))?;
@@ -106,7 +102,10 @@ impl Tool for AskUserTool {
 }
 
 /// 把 `AskUserResponseResult` 格式化成给 LLM 的 tool_result 文本。
-pub fn format_ask_user_response(payload: &AskUserPromptPayload, response: &AskUserResponseResult) -> String {
+pub fn format_ask_user_response(
+    payload: &AskUserPromptPayload,
+    response: &AskUserResponseResult,
+) -> String {
     let mut parts: Vec<String> = Vec::new();
     parts.push(format!("phase: {}", response.phase));
     for q in &payload.questions {
@@ -136,9 +135,7 @@ pub fn format_ask_user_response(payload: &AskUserPromptPayload, response: &AskUs
 }
 
 /// 把 `AskUserResponseResult` 转成 structured_content（前端解析用）。
-pub fn ask_user_structured_content(
-    response: &AskUserResponseResult,
-) -> serde_json::Value {
+pub fn ask_user_structured_content(response: &AskUserResponseResult) -> serde_json::Value {
     serde_json::json!({
         "phase": response.phase,
         "answers": response.answers,

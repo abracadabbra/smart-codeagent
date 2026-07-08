@@ -86,6 +86,7 @@ pub struct McpSettings {
 ///
 /// 对照 Kivio `settings.rs::ChatMcpServer`（line 602-623），砍掉了：
 /// - `connector_id` / `auth`（OAuth 连接器，Phase 3.1 不做）
+///
 /// 保留了 `enabled_tools` 白名单语义（空 = 全启用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -213,7 +214,10 @@ impl Settings {
 
     /// 返回 settings.json 应当写入的路径（生产代码用）。
     pub fn settings_path(app: &AppHandle) -> Option<PathBuf> {
-        app.path().app_data_dir().ok().map(|d| d.join("settings.json"))
+        app.path()
+            .app_data_dir()
+            .ok()
+            .map(|d| d.join("settings.json"))
     }
 
     /// 写入 settings.json。先创建目录（确保存在），然后序列化写入。
@@ -230,8 +234,7 @@ impl Settings {
             }
         }
 
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("序列化失败: {e}"))?;
+        let json = serde_json::to_string_pretty(self).map_err(|e| format!("序列化失败: {e}"))?;
 
         std::fs::write(&path, json)
             .map_err(|e| format!("写入 settings.json 失败 ({:?}): {e}", path))?;
@@ -374,7 +377,8 @@ mod tests {
 
     #[test]
     fn load_from_path_valid_file() {
-        let dir = std::env::temp_dir().join(format!("smart-codeagent-settings-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("smart-codeagent-settings-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let path = dir.join("settings.json");
         std::fs::write(
@@ -399,7 +403,8 @@ mod tests {
 
     #[test]
     fn load_from_path_corrupt_file_returns_default() {
-        let dir = std::env::temp_dir().join(format!("smart-codeagent-bad-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("smart-codeagent-bad-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let path = dir.join("settings.json");
         std::fs::write(&path, "{ broken json ").expect("write garbage");
@@ -453,7 +458,10 @@ mod tests {
                     enabled: true,
                     transport: "stdio".into(),
                     command: "npx".into(),
-                    args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into()],
+                    args: vec![
+                        "-y".into(),
+                        "@modelcontextprotocol/server-filesystem".into(),
+                    ],
                     env: HashMap::new(),
                     cwd: None,
                     enabled_tools: Vec::new(),
@@ -472,7 +480,8 @@ mod tests {
 
     #[test]
     fn save_to_path_and_load_back() {
-        let dir = std::env::temp_dir().join(format!("smart-codeagent-save-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("smart-codeagent-save-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let path = dir.join("settings.json");
 
@@ -484,7 +493,10 @@ mod tests {
                     enabled: true,
                     transport: "stdio".into(),
                     command: "npx".into(),
-                    args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into()],
+                    args: vec![
+                        "-y".into(),
+                        "@modelcontextprotocol/server-filesystem".into(),
+                    ],
                     env: HashMap::new(),
                     cwd: None,
                     enabled_tools: Vec::new(),
@@ -508,7 +520,8 @@ mod tests {
 
     #[test]
     fn reload_from_disk_updates_instance() {
-        let dir = std::env::temp_dir().join(format!("smart-codeagent-reload-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("smart-codeagent-reload-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let path = dir.join("settings.json");
 
