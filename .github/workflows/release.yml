@@ -129,14 +129,17 @@ jobs:
           PWD_LEN=${#TAURI_SIGNING_PRIVATE_KEY_PASSWORD}
           echo "TAURI_SIGNING_PRIVATE_KEY 长度: $KEY_LEN"
           echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD 长度: $PWD_LEN"
-          # 把私钥写到文件，用 TAURI_SIGNING_PRIVATE_KEY_PATH 测试
+          # 检查密码首尾字符的 ASCII 码（诊断首尾空白问题）
+          PWD_FIRST=$(printf '%d' "'${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:0:1}")
+          PWD_LAST=$(printf '%d' "'${TAURI_SIGNING_PRIVATE_KEY_PASSWORD: -1}")
+          echo "密码首字符 ASCII: $PWD_FIRST (期望 49='1')"
+          echo "密码末字符 ASCII: $PWD_LAST (期望 89='Y')"
+          # tauri CLI 版本
+          npx tauri --version
+          # 用文件方式测试（避免内容传输问题）
           printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" > /tmp/test.key
-          FILE_LEN=$(wc -c < /tmp/test.key)
-          echo "写入文件的私钥长度: $FILE_LEN"
-          echo "test content for signing" > /tmp/test-sign.txt
-          TAURI_SIGNING_PRIVATE_KEY_PATH=/tmp/test.key npx tauri signer sign /tmp/test-sign.txt 2>&1 || echo "❌ 用 PATH 签名失败"
-          # 也用内容方式测试
-          npx tauri signer sign /tmp/test-sign.txt 2>&1 || echo "❌ 用内容签名失败"
+          echo "test content" > /tmp/test-sign.txt
+          npx tauri signer sign --private-key-path /tmp/test.key /tmp/test-sign.txt 2>&1 || echo "❌ 签名失败"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
